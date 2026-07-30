@@ -1,6 +1,6 @@
 // Twilio conversational TwiML: Sarvam TTS Play + Gather (listen) + AI reply loop.
-// Dial sets Call Url → this function. Gather posts SpeechResult back here.
-// Query: tenant_id, call_id
+// Opening audio is pre-generated at dial time → instant Play on answer.
+// Silent Gather redirect must NOT replay the intro.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import {
@@ -19,7 +19,7 @@ const corsHeaders = {
 };
 
 const DEFAULT_TENANT = "b0000000-0000-4000-8000-000000000001";
-const MAX_TURNS = 6;
+const MAX_TURNS = 12;
 
 function admin() {
   const url = Deno.env.get("SUPABASE_URL") ?? "";
@@ -73,18 +73,27 @@ async function parseBody(req: Request): Promise<Record<string, string>> {
   return out;
 }
 
-function speakOrPlay(audioUrl: string | null, text: string): string {
+function speakOrPlay(audioUrl: string | null, text: string, sayLang: string): string {
   if (audioUrl) return `<Play>${xml(audioUrl)}</Play>`;
-  return `<Say language="hi-IN">${xml(text)}</Say>`;
+  return `<Say language="${sayLang}">${xml(text)}</Say>`;
 }
 
-function gatherBlock(gatherLang: string, actionUrl: string, promptIfSilent: string): string {
+/** Play/Say inside Gather so listening starts immediately after agent speaks. */
+function gatherWithPrompt(
+  gatherLang: string,
+  actionUrl: string,
+  innerXml: string,
+): string {
+  const hints =
+    gatherLang.startsWith("hi")
+      ? "haan,nahi,cctv,camera,cameras,hd,ip,price,kitne,kitna,lagwana"
+      : "yes,no,cctv,camera,cameras,hd,ip,price,how many,install";
   return (
-    `<Gather input="speech" language="${gatherLang}" speechTimeout="auto" timeout="8" action="${xml(actionUrl)}" method="POST">` +
-    `<Pause length="1"/>` +
+    `<Gather input="speech" language="${gatherLang}" speechTimeout="auto" timeout="6" ` +
+    `action="${xml(actionUrl)}" method="POST" hints="${hints}">` +
+    `${innerXml}` +
     `</Gather>` +
-    `<Say language="${gatherLang}">${xml(promptIfSilent)}</Say>` +
-    `<Redirect method="POST">${xml(actionUrl)}</Redirect>`
+    `<Redirect method="POST">${xml(actionUrl + "&phase=listen")}</Redirect>`
   );
 }
 
@@ -94,7 +103,6 @@ Deno.serve(async (req) => {
   }
 
   let callIdForErr = "";
-  let tenantIdForErr = DEFAULT_TENANT;
   try {
     const url = new URL(req.url);
     const form = req.method === "POST" ? await parseBody(req) : {};
@@ -106,7 +114,7 @@ Deno.serve(async (req) => {
       url.searchParams.get("call_id") ||
       form.call_id ||
       "";
-    tenantIdForErr = tenantId;
+    const phase = url.searchParams.get("phase") || form.phase || "";
     callIdForErr = callId;
     if (!callId) {
       return twimlResponse(`<Say language="hi-IN">Call setup incomplete. Goodbye.</Say><Hangup/>`);
@@ -156,84 +164,51 @@ Deno.serve(async (req) => {
 
     const prevMeta = (call.meta ?? {}) as Record<string, unknown>;
     const turn = Number(prevMeta.voice_turn || 0);
+    const openingPlayed = Boolean(prevMeta.opening_played) || turn >= 1;
     const speech =
       form.SpeechResult ||
       form.UnstableSpeechResult ||
       form.TranscriptionText ||
       "";
-    const actionUrl =
+    const baseAction =
       `${Deno.env.get("SUPABASE_URL")}/functions/v1/bos-voice-twiml` +
       `?tenant_id=${encodeURIComponent(tenantId)}&call_id=${encodeURIComponent(callId)}`;
 
-    let speakText = "";
     let language = String(
       prevMeta.customer_language ||
         voiceCfg.sarvam_language ||
         voiceCfg.tts_language ||
         "hi-IN",
     );
-    let nextTurn = turn;
     const gatherLang = language.startsWith("en") ? "en-IN" : "hi-IN";
-    const silentPrompt = language.startsWith("hi")
-      ? "Main aapki baat sun nahi paya. Kripya dobara boliye."
-      : "I could not hear you. Please speak again.";
 
+    // --- Customer spoke → answer their question (never replay intro) ---
     if (speech.trim()) {
       language = detectLanguageCode(speech, language);
-      nextTurn = turn + 1;
+      const nextTurn = turn + 1;
       const history = Array.isArray(prevMeta.conversation)
         ? [...(prevMeta.conversation as unknown[])]
         : [];
       history.push({ role: "customer", text: speech, at: new Date().toISOString() });
 
+      let speakText = "";
       if (
         nextTurn >= MAX_TURNS ||
         /(bye|goodbye|alvida|hang up|mat call|stop calling)/i.test(speech)
       ) {
-        speakText =
-          language.startsWith("hi")
-            ? `Dhanyavaad. DG.YARD ki taraf se aapka din shubh ho. Phir milenge.`
-            : `Thank you. Wishing you a great day from DG.YARD. Goodbye.`;
-        const audio = await sarvamTtsToPublicUrl(db, {
-          tenantId,
-          callId,
-          text: speakText,
-          apiKey: sarvamKey,
-          speaker,
-          model,
+        speakText = language.startsWith("hi")
+          ? `Dhanyavaad. DG.YARD ki taraf se aapka din shubh ho. Phir milenge.`
+          : `Thank you from DG.YARD. Have a great day. Goodbye.`;
+      } else {
+        speakText = await generateVoiceReply({
+          customerText: speech,
           language,
-          turn: nextTurn,
+          scriptHint: String(call.script || ""),
+          openaiKey: String(openaiKey || ""),
+          agentName,
+          conversation: history as Array<{ role?: string; text?: string }>,
         });
-        await db.from("bos_voice_calls").update({
-          status: "completed",
-          transcript: [
-            call.transcript,
-            `Customer: ${speech}`,
-            `Agent: ${speakText}`,
-          ].filter(Boolean).join("\n"),
-          meta: {
-            ...prevMeta,
-            voice_turn: nextTurn,
-            customer_language: language,
-            conversation: [...history, { role: "agent", text: speakText }],
-            last_sarvam_play: audio.url,
-            sarvam_speaker: speaker,
-            conversational: true,
-            sarvam_tts_error: audio.error || null,
-          },
-          updated_at: new Date().toISOString(),
-        }).eq("id", callId);
-
-        return twimlResponse(`${speakOrPlay(audio.url, speakText)}<Hangup/>`);
       }
-
-      speakText = await generateVoiceReply({
-        customerText: speech,
-        language,
-        scriptHint: String(call.script || ""),
-        openaiKey: String(openaiKey || ""),
-        agentName,
-      });
       history.push({ role: "agent", text: speakText, at: new Date().toISOString() });
 
       const audio = await sarvamTtsToPublicUrl(db, {
@@ -247,8 +222,12 @@ Deno.serve(async (req) => {
         turn: nextTurn,
       });
 
+      const ending =
+        nextTurn >= MAX_TURNS ||
+        /(bye|goodbye|alvida|hang up|mat call|stop calling)/i.test(speech);
+
       await db.from("bos_voice_calls").update({
-        status: "in_progress",
+        status: ending ? "completed" : "in_progress",
         transcript: [
           call.transcript,
           `Customer: ${speech}`,
@@ -257,10 +236,12 @@ Deno.serve(async (req) => {
         meta: {
           ...prevMeta,
           voice_turn: nextTurn,
+          opening_played: true,
           customer_language: language,
           conversation: history,
           last_sarvam_play: audio.url,
           last_customer_speech: speech,
+          last_agent_reply: speakText,
           sarvam_speaker: speaker,
           conversational: true,
           sarvam_tts_error: audio.error || null,
@@ -269,51 +250,83 @@ Deno.serve(async (req) => {
         updated_at: new Date().toISOString(),
       }).eq("id", callId);
 
+      const sayLang = language.startsWith("en") ? "en-IN" : "hi-IN";
+      if (ending) {
+        return twimlResponse(`${speakOrPlay(audio.url, speakText, sayLang)}<Hangup/>`);
+      }
       return twimlResponse(
-        speakOrPlay(audio.url, speakText) +
-          gatherBlock(language.startsWith("en") ? "en-IN" : "hi-IN", actionUrl, silentPrompt),
+        gatherWithPrompt(
+          sayLang,
+          baseAction,
+          speakOrPlay(audio.url, speakText, sayLang),
+        ),
       );
     }
 
-    // Opening turn — Sarvam plays script, then listen
-    speakText = String(
-      call.script ||
+    // --- No speech: after intro already played → short nudge only (never full intro) ---
+    if (openingPlayed || phase === "listen") {
+      const nudge = language.startsWith("hi")
+        ? "Main sun raha hoon. Aap boliye — jaise CCTV chahiye, kitne cameras, HD ya IP."
+        : "I'm listening. Please tell me — for example CCTV, how many cameras, HD or IP.";
+      // Prefer tiny cached nudge? Keep Say short to avoid another 30s TTS wait.
+      return twimlResponse(
+        gatherWithPrompt(
+          gatherLang,
+          baseAction,
+          `<Say language="${gatherLang}">${xml(nudge)}</Say>`,
+        ),
+      );
+    }
+
+    // --- First connect: use pre-generated opening_play (instant) ---
+    const openingText = String(
+      prevMeta.opening_text ||
+        call.script ||
         voiceCfg.inbound_greeting ||
         `Namaste, main ${agentName}, DG.YARD se baat kar raha hoon. Aapki enquiry ke baare mein do minute milenge?`,
-    ).slice(0, 800);
-    nextTurn = Math.max(turn, 1);
-    const audio = await sarvamTtsToPublicUrl(db, {
-      tenantId,
-      callId,
-      text: speakText,
-      apiKey: sarvamKey,
-      speaker,
-      model,
-      language,
-      turn: 0,
-    });
+    ).slice(0, 500);
+
+    let openingUrl =
+      typeof prevMeta.opening_play === "string" && prevMeta.opening_play
+        ? String(prevMeta.opening_play)
+        : null;
+
+    if (!openingUrl && sarvamKey) {
+      const audio = await sarvamTtsToPublicUrl(db, {
+        tenantId,
+        callId,
+        text: openingText,
+        apiKey: sarvamKey,
+        speaker,
+        model,
+        language,
+        turn: 0,
+      });
+      openingUrl = audio.url;
+      prevMeta.sarvam_tts_error = audio.error || null;
+    }
 
     await db.from("bos_voice_calls").update({
       status: "in_progress",
       meta: {
         ...prevMeta,
-        voice_turn: nextTurn,
+        voice_turn: 1,
+        opening_played: true,
+        opening_play: openingUrl,
+        opening_text: openingText,
         customer_language: language,
         conversational: true,
         sarvam_speaker: speaker,
         sarvam_model: model,
-        opening_play: audio.url,
-        sarvam_tts_error: audio.error || null,
         has_sarvam_key: Boolean(sarvamKey),
-        conversation: [
-          ...(Array.isArray(prevMeta.conversation) ? prevMeta.conversation as unknown[] : []),
-          { role: "agent", text: speakText, at: new Date().toISOString() },
-        ],
+        conversation: Array.isArray(prevMeta.conversation) &&
+            (prevMeta.conversation as unknown[]).length > 0
+          ? prevMeta.conversation
+          : [{ role: "agent", text: openingText, at: new Date().toISOString() }],
       },
       updated_at: new Date().toISOString(),
     }).eq("id", callId);
 
-    // Do NOT use .catch() on Postgrest builders — it is not a Promise and crashes the call.
     try {
       await db.from("bos_voice_events").insert({
         id: crypto.randomUUID(),
@@ -321,21 +334,19 @@ Deno.serve(async (req) => {
         call_id: callId,
         lead_id: call.lead_id || null,
         provider: "twilio",
-        event_type: audio.url ? "sarvam_play_opening" : "sarvam_play_fallback_say",
-        payload: {
-          speaker,
-          model,
-          language,
-          error: audio.error || null,
-          has_sarvam_key: Boolean(sarvamKey),
-        },
+        event_type: openingUrl ? "sarvam_play_opening_cached" : "opening_say_fallback",
+        payload: { opening_ready: Boolean(openingUrl), language },
       });
     } catch {
       /* non-fatal */
     }
 
     return twimlResponse(
-      speakOrPlay(audio.url, speakText) + gatherBlock(gatherLang, actionUrl, silentPrompt),
+      gatherWithPrompt(
+        gatherLang,
+        baseAction,
+        speakOrPlay(openingUrl, openingText, gatherLang),
+      ),
     );
   } catch (e) {
     const err = String(e);
@@ -358,7 +369,7 @@ Deno.serve(async (req) => {
       }
     }
     return twimlResponse(
-      `<Say language="hi-IN">Namaste, DG.YARD se call connect ho raha hai. Kripya thodi der mein dubara try karein.</Say><Hangup/>`,
+      `<Say language="hi-IN">Namaste, DG.YARD se. Kripya thodi der mein dubara try karein.</Say><Hangup/>`,
     );
   }
 });

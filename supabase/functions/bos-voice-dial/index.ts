@@ -10,6 +10,12 @@ import {
   type TenantCommConfig,
 } from "../_shared/tenant_comm.ts";
 import { assertUsageLimit } from "../_shared/plan_limits.ts";
+import {
+  normalizeModel,
+  resolveSarvamApiKey,
+  resolveSpeaker,
+  sarvamTtsToPublicUrl,
+} from "../_shared/sarvam_voice.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -554,6 +560,62 @@ Deno.serve(async (req) => {
       }).eq("id", callId);
     }
 
+    // Pre-generate Sarvam opening while phone is still ringing → instant Play on answer.
+    let openingMeta: Record<string, unknown> = {};
+    if (provider === "twilio" || provider === "telnyx") {
+      const { data: settingsRow } = await db
+        .from("bos_tenant_settings")
+        .select("api_secrets, api_config, settings")
+        .eq("tenant_id", tenantId)
+        .maybeSingle();
+      const secrets = (settingsRow?.api_secrets ?? {}) as Record<string, unknown>;
+      const voiceCfg = ((settingsRow?.api_config as Record<string, unknown>)?.voice ?? {}) as Record<
+        string,
+        string
+      >;
+      const aiAgent = ((settingsRow?.settings as Record<string, unknown>)?.ai_agent ?? {}) as Record<
+        string,
+        string
+      >;
+      const agentName = aiAgent.name || "DG.YARD Sales Agent";
+      const openingText = String(
+        call.script ||
+          voiceCfg.inbound_greeting ||
+          `Namaste, main ${agentName}, DG.YARD se baat kar raha hoon. Aapki enquiry ke baare mein do minute milenge?`,
+      ).slice(0, 500);
+      const language = voiceCfg.sarvam_language || voiceCfg.tts_language || "hi-IN";
+      const model = normalizeModel(voiceCfg.sarvam_model || voiceCfg.tts_model);
+      const speaker = resolveSpeaker(voiceCfg.sarvam_speaker || voiceCfg.tts_speaker, model);
+      const sarvamKey = resolveSarvamApiKey(secrets, Deno.env.get("SARVAM_API_KEY") || "");
+      const audio = await sarvamTtsToPublicUrl(db, {
+        tenantId,
+        callId,
+        text: openingText,
+        apiKey: sarvamKey,
+        speaker,
+        model,
+        language,
+        turn: 0,
+      });
+      openingMeta = {
+        opening_text: openingText,
+        opening_play: audio.url,
+        opening_ready: Boolean(audio.url),
+        opening_played: false,
+        conversational: true,
+        sarvam_speaker: speaker,
+        sarvam_model: model,
+        customer_language: language,
+        has_sarvam_key: Boolean(sarvamKey),
+        sarvam_tts_error: audio.error || null,
+        conversation: [{ role: "agent", text: openingText, at: new Date().toISOString() }],
+      };
+      await db.from("bos_voice_calls").update({
+        meta: { ...(call.meta ?? {}), ...openingMeta },
+        updated_at: new Date().toISOString(),
+      }).eq("id", callId);
+    }
+
     let result: DialResult = {
       ok: false,
       sim: true,
@@ -608,6 +670,7 @@ Deno.serve(async (req) => {
       updated_at: new Date().toISOString(),
       meta: {
         ...(call.meta ?? {}),
+        ...openingMeta,
         voice_provider: result.sim ? "stub" : provider,
         dial_sim: result.sim,
         dial_at: new Date().toISOString(),
@@ -617,6 +680,11 @@ Deno.serve(async (req) => {
           ? `Stub — add secrets under api_secrets.voice.${provider}`
           : `Live ${provider} dial started`,
         ...result.meta,
+        // Keep pre-generated opening even if provider meta overwrites keys
+        opening_play: openingMeta.opening_play ?? result.meta?.opening_play,
+        opening_text: openingMeta.opening_text,
+        opening_ready: openingMeta.opening_ready,
+        opening_played: false,
       },
     }).eq("id", callId);
 
