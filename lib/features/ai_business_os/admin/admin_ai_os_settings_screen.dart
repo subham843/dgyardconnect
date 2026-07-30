@@ -1617,8 +1617,8 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   children: [
                     for (final f in const [
                       ('all', 'All'),
-                      ('female', 'Female'),
-                      ('male', 'Male'),
+                      ('female', 'Female · महिला'),
+                      ('male', 'Male · पुरुष'),
                     ])
                       ChoiceChip(
                         label: Text(f.$2),
@@ -1652,8 +1652,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                           gender == 'Female' ? Icons.woman : Icons.man,
                           color: gender == 'Female' ? Colors.pink.shade400 : Colors.blue.shade700,
                         ),
-                        title: Text(label),
-                        subtitle: Text(gender),
+                        title: Text('$label · $gender'),
+                        subtitle: Text(
+                          gender == 'Female' ? 'Female · महिला' : 'Male · पुरुष',
+                        ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -1662,19 +1664,19 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                                 padding: EdgeInsets.only(right: 4),
                                 child: Icon(Icons.check_circle, color: Colors.teal, size: 18),
                               ),
-                            IconButton(
-                              tooltip: 'Play sample',
+                            FilledButton.tonalIcon(
                               onPressed: sampling ||
                                       !(BosPermissions.canManageSettings || BosPermissions.canEdit)
                                   ? null
                                   : () => _playSpeakerSample(id),
                               icon: sampling
                                   ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
+                                      width: 16,
+                                      height: 16,
                                       child: CircularProgressIndicator(strokeWidth: 2),
                                     )
-                                  : const Icon(Icons.play_circle_outline),
+                                  : const Icon(Icons.play_arrow, size: 18),
+                              label: const Text('Sample'),
                             ),
                           ],
                         ),
@@ -1804,6 +1806,70 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                       ),
                     );
                   }),
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.indigo.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Selected Sarvam voice',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: Colors.indigo.shade900,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(
+                            _speakerGender(_sarvamSpeaker) == 'Female'
+                                ? Icons.woman
+                                : Icons.man,
+                            color: _speakerGender(_sarvamSpeaker) == 'Female'
+                                ? Colors.pink.shade400
+                                : Colors.blue.shade700,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${_sarvamSpeaker[0].toUpperCase()}${_sarvamSpeaker.substring(1)}'
+                              ' · ${_speakerGender(_sarvamSpeaker) == 'Female' ? 'Female · महिला' : 'Male · पुरुष'}'
+                              ' · ${_sarvamModel}',
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          FilledButton.icon(
+                            onPressed: _samplingSpeaker != null ||
+                                    !(BosPermissions.canManageSettings || BosPermissions.canEdit)
+                                ? null
+                                : () => _playSpeakerSample(_sarvamSpeaker),
+                            icon: _samplingSpeaker == _sarvamSpeaker
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.play_arrow),
+                            label: const Text('Play sample'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Upar wali list se Male/Female voice choose karo (▶ Sample). '
+                        'Phir Save → Preview TTS.',
+                        style: TextStyle(fontSize: 12, color: Colors.indigo.shade800),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _voiceTestPhoneCtrl,
