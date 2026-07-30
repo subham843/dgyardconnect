@@ -69,20 +69,43 @@ Deno.serve(async (req) => {
         error = "Missing Exotel api_key / api_token / account_sid";
       }
     } else if (provider === "twilio") {
-      const sid = comm.voiceAccountSid || comm.twilioSid;
-      const token = comm.voiceApiToken || comm.voiceApiKey;
+      const sidRaw = String(comm.voiceAccountSid || comm.twilioSid || "").trim();
+      const tokenRaw = String(comm.voiceApiToken || comm.voiceApiKey || "").trim();
+      const sid = sidRaw.replace(/^["']|["']$/g, "");
+      const token = tokenRaw.replace(/^["']|["']$/g, "");
       checks.account_sid = Boolean(sid);
       checks.auth_token = Boolean(token);
-      if (sid && token) {
+      checks.sid_prefix = sid.slice(0, 2).toUpperCase() || null;
+      if (!sid || !token) {
+        error = "Missing Twilio Account SID / Auth Token — Save settings pehle, phir Verify";
+      } else if (sid.toUpperCase().startsWith("SK")) {
+        error =
+          "Account SID field me API Key (SK…) hai. Console → Account → Account SID (AC…) paste karo. " +
+          "API Key ke liye alag SK + Secret + AC SID chahiye.";
+      } else if (!sid.toUpperCase().startsWith("AC")) {
+        error =
+          `Account SID "${sid.slice(0, 4)}…" galat lag raha hai — Twilio Account SID AC se start hota hai`;
+      } else {
         const res = await fetch(
           `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}.json`,
           { headers: { Authorization: basicAuth(sid, token) } },
         );
-        detail = await res.json().catch(() => ({}));
+        const bodyJson = await res.json().catch(() => ({})) as Record<string, unknown>;
+        detail = bodyJson;
         live = res.ok;
-        if (!res.ok) error = `Twilio account lookup ${res.status}`;
-      } else {
-        error = "Missing Twilio Account SID / Auth Token";
+        if (!res.ok) {
+          const twilioMsg = String(
+            bodyJson.message || bodyJson.error_message || bodyJson.code || "",
+          );
+          if (res.status === 401 || res.status === 403) {
+            error =
+              `Twilio ${res.status} — Auth Token Account SID se match nahi karta. ` +
+              `Console → Account → API keys & tokens → Auth Token (Reveal) copy karke dubara Save + Verify. ` +
+              (twilioMsg ? `Twilio: ${twilioMsg}` : "");
+          } else {
+            error = `Twilio account lookup ${res.status}${twilioMsg ? ` · ${twilioMsg}` : ""}`;
+          }
+        }
       }
     } else if (provider === "plivo") {
       checks.auth_id = Boolean(comm.voiceAccountSid);

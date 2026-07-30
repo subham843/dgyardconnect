@@ -400,6 +400,16 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     }
   }
 
+  /// Trim + strip wrapping quotes — trailing spaces often cause Twilio 403.
+  String _sanitizeTwilioSecret(String raw) {
+    var s = raw.trim();
+    if ((s.startsWith('"') && s.endsWith('"')) ||
+        (s.startsWith("'") && s.endsWith("'"))) {
+      s = s.substring(1, s.length - 1).trim();
+    }
+    return s;
+  }
+
   Future<void> _verifyVoiceKeys() async {
     if (!BosPermissions.canManageSettings && !BosPermissions.canEdit) {
       _denied();
@@ -591,10 +601,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
       switch (providerKey) {
         case 'twilio':
           if (_voiceSidCtrl.text.trim().isNotEmpty) {
-            nested['account_sid'] = _voiceSidCtrl.text.trim();
+            nested['account_sid'] = _sanitizeTwilioSecret(_voiceSidCtrl.text);
           }
           if (_voiceKeyCtrl.text.trim().isNotEmpty) {
-            nested['auth_token'] = _voiceKeyCtrl.text.trim();
+            nested['auth_token'] = _sanitizeTwilioSecret(_voiceKeyCtrl.text);
           }
           break;
         case 'plivo':
@@ -1181,14 +1191,27 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 if (_voiceProvider == 'twilio') ...[
                   TextField(
                     controller: _voiceSidCtrl,
-                    decoration: const InputDecoration(labelText: 'Twilio Account SID'),
-                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Twilio Account SID (AC…)',
+                      hintText: 'Console → Account info → Account SID',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                   TextField(
                     controller: _voiceKeyCtrl,
-                    decoration: const InputDecoration(labelText: 'Twilio Auth Token'),
+                    decoration: const InputDecoration(
+                      labelText: 'Twilio Auth Token',
+                      hintText: 'Same page → Auth Token → Reveal',
+                      border: OutlineInputBorder(),
+                    ),
                     obscureText: true,
                   ),
+                  Text(
+                    'Verify 403 = SID/Token mismatch. Use Account SID (AC…), not API Key (SK…). '
+                    'Save settings, then Verify keys. Number E.164 (+91…).',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  ),
+                  const SizedBox(height: 8),
                 ],
                 if (_voiceProvider == 'telnyx') ...[
                   TextField(

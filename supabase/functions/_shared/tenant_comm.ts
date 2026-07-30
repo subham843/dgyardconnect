@@ -105,13 +105,15 @@ export function resolveVoiceCreds(
   if (provider === "twilio") {
     return {
       voiceProvider: provider,
-      voiceApiKey: pick.auth_token || pick.api_key || envKey("TWILIO_AUTH_TOKEN"),
-      voiceApiToken: pick.auth_token || pick.api_token || pick.api_key || envKey("TWILIO_AUTH_TOKEN"),
-      voiceAccountSid:
+      voiceApiKey: String(pick.auth_token || pick.api_key || envKey("TWILIO_AUTH_TOKEN")).trim(),
+      voiceApiToken: String(pick.auth_token || pick.api_token || pick.api_key || envKey("TWILIO_AUTH_TOKEN")).trim(),
+      voiceAccountSid: String(
         pick.account_sid || pick.sid || envKey("TWILIO_ACCOUNT_SID"),
-      voiceNumber:
+      ).trim(),
+      voiceNumber: String(
         cfg.voice?.number || pick.number || pick.from || envKey("TWILIO_VOICE_FROM") ||
-        envKey("TWILIO_FROM"),
+          envKey("TWILIO_FROM") || "",
+      ).trim(),
       voiceExtra: {},
     };
   }
