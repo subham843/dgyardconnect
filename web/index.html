@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Digital | Smart | Secure Living — D.G.Yard Connect. CCTV, networking, IT infrastructure, dealer dispatch app, and public store.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://dgyard.com/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="D.G.Yard Connect">
+  <meta property="og:title" content="D.G.Yard Connect — Digital | Smart | Secure Living">
+  <meta property="og:description" content="Enterprise security & IT solutions, public store, calculators, and the Connect dispatch platform.">
+  <meta property="og:url" content="https://dgyard.com/">
+  <meta property="og:image" content="https://dgyard.com/icons/Icon-512.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="D.G.Yard Connect — Digital | Smart | Secure Living">
+  <meta name="twitter:description" content="Enterprise security & IT solutions, public store, calculators, and the Connect dispatch platform.">
+  <meta name="twitter:image" content="https://dgyard.com/icons/Icon-512.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="D.G.Yard Connect">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <title>D.G.Yard Connect</title>
+  <link rel="manifest" href="manifest.json">
+  <!-- Maps JS is lazy-loaded (not on critical path). See window.__dgLoadGoogleMaps. -->
+  <script type="application/ld+json" id="dg-seo-jsonld">{"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"D.G.Yard Connect","url":"https://dgyard.com/","logo":"https://dgyard.com/icons/Icon-512.png","description":"Digital | Smart | Secure Living — security, IT, store, and field-service platform."},{"@type":"LocalBusiness","name":"D.G.Yard","url":"https://dgyard.com/","image":"https://dgyard.com/icons/Icon-512.png","description":"CCTV, networking, and IT infrastructure solutions with dealer dispatch and public ecommerce store.","areaServed":"IN","telephone":"+918298955009","email":"info@dgyard.com"}]}</script>
+  <style>
+    html,body{margin:0;background:#070A12;color:#fff;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+    #app-main{min-height:100dvh;position:relative;display:flex;align-items:center;justify-content:center}
+    #lcp-fallback{padding:24px;text-align:center;max-width:92vw}
+    #lcp-fallback p{margin:0 0 14px;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:#c5cdd9}
+    #lcp-fallback h1{margin:0;font-size:clamp(1.65rem,5.8vw,2.6rem);font-weight:700;line-height:1.25;color:#fff}
+    #recaptcha-container{position:fixed;z-index:2147483000;left:50%;bottom:24px;transform:translateX(-50%);min-height:1px}
+  </style>
+</head>
+<body>
+  <!-- Must stay OUTSIDE #app-main — Flutter hostElement replaces that subtree and
+       would destroy reCAPTCHA (real numbers then fail with captcha-check-failed;
+       Firebase test numbers still work because they skip reCAPTCHA). -->
+  <div id="recaptcha-container"></div>
+  <main id="app-main" role="main" aria-label="D.G.Yard Connect">
+    <div id="lcp-fallback">
+      <p>India's Premier Technology Platform</p>
+      <h1>Digital | Secure | Smart Living</h1>
+    </div>
+  </main>
+  <script src="flutter_deferred_boot.js" defer></script>
+  <script defer>
+(function(){
+  var f=function(){var m=document.querySelector('meta[name="viewport"]');if(m&&/user-scalable=no|maximum-scale=1/.test(m.content))m.content='width=device-width, initial-scale=1.0, viewport-fit=cover'};
+  f();
+  new MutationObserver(f).observe(document.head,{childList:!0,subtree:!0,attributes:!0,attributeFilter:['content']});
+  window.addEventListener('flutter-first-frame',function(){var e=document.getElementById('lcp-fallback');if(e)e.remove()});
+
+  // Lazy Google Maps JS — only when a map screen needs it (or long after first paint).
+  var mapsKey='AIzaSyBR8xcLtJmtc_tjljKcgawfgR2VN0HHzMQ';
+  var mapsPromise=null;
+  window.__dgLoadGoogleMaps=function(){
+    if(window.google&&window.google.maps)return Promise.resolve();
+    if(mapsPromise)return mapsPromise;
+    mapsPromise=new Promise(function(resolve,reject){
+      var s=document.createElement('script');
+      s.async=true;
+      s.src='https://maps.googleapis.com/maps/api/js?key='+mapsKey;
+      s.onload=function(){resolve()};
+      s.onerror=function(){mapsPromise=null;reject(new Error('Maps JS failed'))};
+      document.head.appendChild(s);
+    });
+    return mapsPromise;
+  };
+  // Do NOT preload Maps after first frame — Maps WebGL fights CanvasKit and
+  // triggers Flutter's known `_handledContextLostEvent` LateInitializationError
+  // (especially on hot restart). Load only when a map screen calls this API.
+
+  var g='G-8JKPZHKDWY',l=!1;
+  function t(){if(l)return;l=!0;var s=document.createElement('script');s.async=!0;s.src='https://www.googletagmanager.com/gtag/js?id='+g;document.head.appendChild(s);window.dataLayer=window.dataLayer||[];function a(){window.dataLayer.push(arguments)}window.gtag=a;a('js',new Date);a('config',g,{send_page_view:!0})}
+  ['pointerdown','keydown','scroll','touchstart'].forEach(function(e){window.addEventListener(e,t,{once:!0,passive:!0})});
+  window.addEventListener('flutter-first-frame',function(){setTimeout(t,8e3)});
+})();
+  </script>
+</body>
+</html>

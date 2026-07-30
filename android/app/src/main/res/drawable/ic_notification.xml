@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Monochrome small icon for Android notifications.
+  Note: Android notification small icon cannot be dynamic at runtime.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2C8.13,2 5,5.13 5,9v3.09L3.71,13.38C3.26,13.83 3,14.46 3,15.12V17c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2v-1.88c0,-0.66 -0.26,-1.29 -0.71,-1.74L19,12.09V9c0,-3.87 -3.13,-7 -7,-7zM12,22c1.1,0 2,-0.9 2,-2h-4c0,1.1 0.9,2 2,2z"/>
+</vector>
+

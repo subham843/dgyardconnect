@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Synced from lib/core/config/maps_config.dart -->
+    <string name="google_maps_api_key">AIzaSyBR8xcLtJmtc_tjljKcgawfgR2VN0HHzMQ</string>
+    <!-- Must be AdMob *App ID* (AdMob → App → App settings): format ca-app-pub-XXXX~YYYY with ~ not / -->
+    <string name="admob_app_id">ca-app-pub-6613745021183228~4284859042</string>
+    <!-- Replace with your Meta (Facebook) App ID from developers.facebook.com → Settings → Basic -->
+    <string name="facebook_app_id">1431643491777453</string>
+    <!-- Replace with Client token from Meta → Settings → Advanced -->
+    <string name="facebook_client_token">372e9886cbb8e394118f691fb096d03a</string>
+    <!-- Must be literal: fb + facebook_app_id (no spaces) -->
+    <string name="fb_login_protocol_scheme">fb1431643491777453</string>
+</resources>

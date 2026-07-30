@@ -1,0 +1,4 @@
+# Paste your App Icon 512 URL from Admin > Brand Kit below (one line, no quotes):
+# Example: https://firebasestorage.googleapis.com/v0/b/xxx/o/yyy?alt=media&token=zzz
+
+https://firebasestorage.googleapis.com/v0/b/dgyard-connect.firebasestorage.app/o/brand_kit%2FappIcon512_1772983292221.png?alt=media&token=219db507-8ce7-4782-9c31-b1cc41547fe2

@@ -1,0 +1,29 @@
+---
+description: Supabase schema, migrations, Edge Functions, shop/calculator data layer for DG Yard Connect. Apply when user mentions Supabase, tables, migrations, db push, shop catalog, or calculator rules.
+globs: supabase/**/*,lib/features/shop/**/*,lib/features/calculator/**/*,lib/core/supabase/**/*
+alwaysApply: false
+---
+
+# Supabase platform (DG Yard Connect)
+
+Read and follow **`.cursor/skills/dgyard-supabase/SKILL.md`** for all Supabase work.
+
+## Must do
+- Schema changes → new file in `supabase/migrations/` then **`npx supabase db push`** or **`npm run deploy:supabase`** (from `scripts/`).
+- Update `supabase/SCHEMA.md` when tables/columns change.
+- Never replace Firebase Auth; never migrate Firestore Connect data.
+- Shared identity: `firebase_uid` = Firebase Auth UID.
+
+## Must not do
+- Manual-only SQL Editor steps unless CLI fails (then document why).
+- Edit `features/marketplace/` Firestore code for new Shop features (use `features/shop/` + Supabase).
+- Break existing auth, jobs, or billing flows.
+
+## Quick commands
+```bash
+cd scripts && npm run deploy:supabase
+npx supabase db push
+powershell -File scripts/supabase-new-migration.ps1 -Name "your_change"
+```
+
+User prompt examples: `supabase/PROMPTS.md`

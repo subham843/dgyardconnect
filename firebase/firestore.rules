@@ -1,0 +1,285 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSuperAdmin() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
+    }
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+      allow read, write: if isSuperAdmin();
+      match /notifications/{notifId} {
+        allow read, write: if isOwner(userId);
+      }
+      match /settlement_accounts/{accountId} {
+        allow read, write: if isOwner(userId);
+        allow read, write: if isSuperAdmin();
+      }
+      match /marketplace_cart/{cartDocId} {
+        allow read, write: if isOwner(userId);
+        match /items/{itemId} {
+          allow read, write: if isOwner(userId);
+        }
+      }
+    }
+    match /jobs/{jobId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null;
+    }
+    match /wallets/{walletId} {
+      allow read: if isOwner(walletId);
+      allow write: if false;
+    }
+    match /otps/{otpId} {
+      allow read, write: if false;
+    }
+    match /job_chats/{jobId}/messages/{msgId} {
+      allow read, write: if request.auth != null;
+    }
+    match /job_types/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /sectors/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /sector_sub_options/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /skills/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /industry_types/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /rate_matrix/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /default_warranty/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /wiring_types/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /wiring_rate_config/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /platform_charge_config/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /travel_expense_config/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /config/brand_kit {
+      allow read: if true;
+      allow write: if request.auth != null && isSuperAdmin();
+    }
+    match /config/job_limit_config {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /config/marketplace_rules {
+      allow read, write: if isSuperAdmin();
+    }
+    match /ads/{adId} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /warranty_claims/{claimId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+      allow delete: if isSuperAdmin();
+    }
+    match /warranty_claim_categories/{id} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /service_completion_records/{recordId} {
+      allow read: if request.auth != null;
+      allow create: if false;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /dealer_payment_receipts/{receiptId} {
+      allow read: if request.auth != null && resource.data.dealerId == request.auth.uid;
+      allow create: if false;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /platform_invoices/{invoiceId} {
+      allow read: if request.auth != null && (resource.data.dealerId == request.auth.uid || isSuperAdmin());
+      allow create: if false;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /technician_payment_receipts/{receiptId} {
+      allow read: if request.auth != null && (resource.data.technicianId == request.auth.uid || isSuperAdmin());
+      allow create: if false;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /warranty_release_receipts/{releaseId} {
+      allow read: if request.auth != null && (resource.data.technicianId == request.auth.uid || isSuperAdmin());
+      allow create: if false;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /platform_expenses/{expenseId} {
+      allow read, write: if isSuperAdmin();
+    }
+    match /technician_payouts/{payoutId} {
+      allow read: if request.auth != null && (resource.data.technicianId == request.auth.uid || isSuperAdmin());
+      allow create: if false;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /platform_financial_reports/{reportId} {
+      allow read: if isSuperAdmin();
+      allow create, update, delete: if false;
+    }
+    match /config/billing_gst {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /job_disputes/{disputeId} {
+      allow read: if request.auth != null && (resource.data.dealerId == request.auth.uid || resource.data.technicianId == request.auth.uid || isSuperAdmin());
+      allow create: if request.auth != null;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /cancellation_compensations/{compId} {
+      allow read: if request.auth != null && (resource.data.technicianId == request.auth.uid || isSuperAdmin());
+      allow create, update, delete: if isSuperAdmin();
+    }
+    match /legal_documents/{docId} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+    match /user_terms_acceptance/{acceptanceId} {
+      allow read: if request.auth != null && (resource.data.user_id == request.auth.uid || isSuperAdmin());
+      allow create: if request.auth != null;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /trust_score_history/{entryId} {
+      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || isSuperAdmin());
+      allow create, update, delete: if false;
+    }
+    match /technician_strikes/{strikeId} {
+      allow read: if request.auth != null && (resource.data.technician_id == request.auth.uid || isSuperAdmin());
+      allow create, update, delete: if false;
+    }
+    match /audit_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create, update, delete: if false;
+    }
+    match /job_evidence/{jobId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+    match /fraud_alerts/{alertId} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    // Marketplace taxonomy: categories → subcategories → attribute defs (read all authed; write superadmin).
+    match /marketplace_categories/{categoryId} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+      match /subcategories/{subcategoryId} {
+        allow read: if request.auth != null;
+        allow write: if isSuperAdmin();
+        match /attributes/{attributeId} {
+          allow read: if request.auth != null;
+          allow write: if isSuperAdmin();
+        }
+      }
+    }
+
+    // --- Marketplace (B2B): catalog has no seller PII; listings are seller-scoped ---
+    match /marketplace_catalog/{productId} {
+      allow read: if request.auth != null &&
+        (isSuperAdmin() ||
+          resource.data.listing_status == 'live' ||
+          resource.data.listing_status == 'out_of_stock');
+      allow create, delete: if isSuperAdmin();
+      allow update: if isSuperAdmin() || (
+        request.auth != null &&
+        resource.data.seller_uid == request.auth.uid &&
+        request.resource.data.seller_uid == resource.data.seller_uid &&
+        request.resource.data.source_listing_id == resource.data.source_listing_id &&
+        request.resource.data.listing_status in ['live', 'out_of_stock'] &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock_qty', 'listing_status', 'updated_at'])
+      );
+    }
+    match /marketplace_listings/{listingId} {
+      allow read: if request.auth != null &&
+        (resource.data.seller_uid == request.auth.uid || isSuperAdmin());
+      allow create: if request.auth != null &&
+        request.resource.data.seller_uid == request.auth.uid;
+      allow update: if request.auth != null && (
+        isSuperAdmin() ||
+        (
+          resource.data.seller_uid == request.auth.uid &&
+          resource.data.status in ['draft', 'rejected']
+        ) ||
+        (
+          resource.data.seller_uid == request.auth.uid &&
+          resource.data.status == 'published' &&
+          request.resource.data.status == 'pending_review' &&
+          request.resource.data.seller_uid == resource.data.seller_uid &&
+          request.resource.data.catalog_product_id == resource.data.catalog_product_id
+        )
+      );
+      allow delete: if isSuperAdmin();
+    }
+    // Marketplace orders: created only via Cloud Functions (Admin SDK). Superadmin may patch status from console app.
+    match /marketplace_orders/{orderId} {
+      allow read: if request.auth != null &&
+        (resource.data.buyer_uid == request.auth.uid || isSuperAdmin());
+      allow create: if false;
+      allow update, delete: if isSuperAdmin();
+      match /lines/{lineId} {
+        allow read: if request.auth != null &&
+          (get(/databases/$(database)/documents/marketplace_orders/$(orderId)).data.buyer_uid == request.auth.uid ||
+            isSuperAdmin());
+        allow create: if false;
+        allow update, delete: if isSuperAdmin();
+      }
+    }
+    match /marketplace_rfqs/{rfqId} {
+      allow read: if request.auth != null &&
+        (resource.data.buyer_uid == request.auth.uid || isSuperAdmin());
+      allow create: if request.auth != null &&
+        request.resource.data.buyer_uid == request.auth.uid;
+      allow update, delete: if isSuperAdmin();
+    }
+    match /marketplace_seller_profiles/{profileId} {
+      allow read: if request.auth != null &&
+        (resource.data.owner_uid == request.auth.uid || isSuperAdmin());
+      allow write: if isSuperAdmin();
+      allow create: if request.auth != null &&
+        request.resource.data.owner_uid == request.auth.uid;
+    }
+    match /marketplace_audit_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if isSuperAdmin();
+      allow update, delete: if false;
+    }
+    // Per-line seller work queue; created by Cloud Functions only.
+    match /marketplace_seller_order_requests/{requestId} {
+      allow read: if request.auth != null &&
+        (resource.data.seller_uid == request.auth.uid || isSuperAdmin());
+      allow create, update, delete: if false;
+    }
+    match /marketplace_payout_batches/{batchId} {
+      allow read, write: if isSuperAdmin();
+    }
+  }
+}

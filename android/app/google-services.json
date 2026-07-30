@@ -1,0 +1,70 @@
+{
+  "project_info": {
+    "project_number": "541039650342",
+    "project_id": "dgyard-connect",
+    "storage_bucket": "dgyard-connect.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:541039650342:android:85318029c60f7eba4968e7",
+        "android_client_info": {
+          "package_name": "com.dgyardconnect.dgyardconnect"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "541039650342-0rbh3dgvr1jrok8ll3o98mi88bapfm5p.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dgyardconnect.dgyardconnect",
+            "certificate_hash": "bd6c815f6eb366a268379eeb57ae1982c2f5f571"
+          }
+        },
+        {
+          "client_id": "541039650342-22f5i8r9149uc6c19p2iavvc2vlf11qr.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dgyardconnect.dgyardconnect",
+            "certificate_hash": "8c1c6d589aaa1ca5e85a9dac7f76065c9ade40da"
+          }
+        },
+        {
+          "client_id": "541039650342-raavd54hnaq4eek3p2k4cfah4citulsa.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dgyardconnect.dgyardconnect",
+            "certificate_hash": "539340ac8c4dd786a2cf8e5cf6a5b6835408f1d7"
+          }
+        },
+        {
+          "client_id": "541039650342-d554no77adv12o4bcpvuu88af0muj702.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBOzuY46r0-iUR4kyB8-tlhuq8zbRchXIg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "541039650342-d554no77adv12o4bcpvuu88af0muj702.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "541039650342-uoqmqns5da4gajg87a7095ggtdlj92up.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.dgyardconnect.dgyardconnect"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

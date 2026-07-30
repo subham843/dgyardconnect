@@ -1,0 +1,76 @@
+# Supabase CLI — deploy with: npm run deploy:supabase (from scripts folder)
+# Or: npx supabase db push && npx supabase functions deploy exchange-firebase-token
+
+project_id = "xtnfmrourhzspehvhrkz"
+
+[api]
+enabled = true
+
+[db]
+major_version = 17
+
+[functions.exchange-firebase-token]
+verify_jwt = false
+
+[functions.shop-razorpay]
+verify_jwt = false
+
+[functions.platform-image-search]
+verify_jwt = false
+
+[functions.platform-text-assist]
+verify_jwt = false
+
+[functions.bos-ai-qualify]
+verify_jwt = false
+
+[functions.bos-whatsapp-webhook]
+verify_jwt = false
+
+[functions.bos-whatsapp-reply]
+verify_jwt = false
+
+[functions.bos-campaign-run]
+verify_jwt = false
+
+[functions.bos-kb-reindex]
+verify_jwt = false
+
+[functions.bos-proposal-draft]
+verify_jwt = false
+
+[functions.bos-voice-complete]
+verify_jwt = false
+
+[functions.bos-voice-script]
+verify_jwt = false
+
+[functions.bos-marketing-generate]
+verify_jwt = false
+
+[functions.bos-billing]
+verify_jwt = false
+
+[functions.bos-sales-orchestrate]
+verify_jwt = false
+
+[functions.bos-sales-followups]
+verify_jwt = false
+
+[functions.bos-ai-reply]
+verify_jwt = false
+
+[functions.bos-chat-ingest]
+verify_jwt = false
+
+[functions.bos-campaign-ai-copy]
+verify_jwt = false
+
+[functions.bos-tenant-secrets]
+verify_jwt = false
+
+[functions.bos-invite-email]
+verify_jwt = false
+
+[functions.bos-voice-dial]
+verify_jwt = false

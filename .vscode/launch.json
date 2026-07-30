@@ -1,0 +1,50 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "dgyardconnect (Chrome • release / fastest)",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "chrome",
+      "flutterMode": "release",
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json",
+        "--web-port=5050"
+      ]
+    },
+    {
+      "name": "dgyardconnect (Chrome • fast hot reload)",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "chrome",
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json",
+        "--web-experimental-hot-reload",
+        "--web-port=5050",
+        "--web-browser-flag=--user-data-dir=${workspaceFolder}/.chrome-dev-profile",
+        "--web-browser-flag=--disable-features=ChromeWhatsNewUI,TranslateUI",
+        "--web-browser-flag=--no-first-run",
+        "--web-browser-flag=--no-default-browser-check"
+      ]
+    },
+    {
+      "name": "dgyardconnect (Chrome • safe / classic restart)",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "chrome",
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json",
+        "--web-port=5050",
+        "--web-browser-flag=--user-data-dir=${workspaceFolder}/.chrome-dev-profile"
+      ]
+    },
+    {
+      "name": "dgyardconnect",
+      "request": "launch",
+      "type": "dart",
+      "toolArgs": [
+        "--dart-define-from-file=dart_defines.json"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /dealer
+Disallow: /technician
+Disallow: /login
+Disallow: /phone
+Disallow: /otp
+Disallow: /register
+Disallow: /settings
+Disallow: /legal
+Disallow: /marketplace
+Disallow: /shop
+Disallow: /app/
+Disallow: /store/cart
+Disallow: /walkthrough
+Disallow: /service-area
+Disallow: /role-choice
+Disallow: /pending-approval
+Disallow: /splash
+Disallow: /verify
+Disallow: /rate
+Disallow: /chat
+Disallow: /offers
+
+Sitemap: https://dgyard.com/sitemap.xml

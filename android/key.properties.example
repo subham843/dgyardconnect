@@ -1,0 +1,5 @@
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=upload
+# Relative to android/app/ when Gradle loads the signing config
+storeFile=../../upload-keystore.jks

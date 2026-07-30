@@ -1,0 +1,101 @@
+﻿-- Return tenant_id from accept so Flutter can set active tenant + re-exchange JWT.
+
+DROP FUNCTION IF EXISTS bos_accept_invite(text, text);
+
+CREATE OR REPLACE FUNCTION bos_accept_invite(p_token text, p_email text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid text := auth_firebase_uid();
+  v_invite bos_tenant_invites%ROWTYPE;
+  v_member_id uuid;
+BEGIN
+  IF v_uid IS NULL OR v_uid = '' THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+  IF p_token IS NULL OR length(trim(p_token)) = 0 THEN
+    RAISE EXCEPTION 'Invite token required';
+  END IF;
+  IF p_email IS NULL OR length(trim(p_email)) = 0 THEN
+    RAISE EXCEPTION 'Email required';
+  END IF;
+
+  SELECT * INTO v_invite
+  FROM bos_tenant_invites
+  WHERE token = trim(p_token)
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Invite not found';
+  END IF;
+  IF v_invite.status <> 'pending' THEN
+    RAISE EXCEPTION 'Invite is not pending';
+  END IF;
+  IF v_invite.expires_at < now() THEN
+    UPDATE bos_tenant_invites SET status = 'expired', updated_at = now() WHERE id = v_invite.id;
+    RAISE EXCEPTION 'Invite expired';
+  END IF;
+  IF lower(trim(v_invite.email)) <> lower(trim(p_email)) THEN
+    RAISE EXCEPTION 'Email does not match invite';
+  END IF;
+
+  SELECT id INTO v_member_id
+  FROM bos_tenant_members
+  WHERE tenant_id = v_invite.tenant_id
+    AND firebase_uid = v_uid
+    AND deleted_at IS NULL
+  LIMIT 1;
+
+  IF v_member_id IS NULL THEN
+    v_member_id := gen_random_uuid();
+    INSERT INTO bos_tenant_members (
+      id, tenant_id, firebase_uid, role, email, department_id, is_active
+    ) VALUES (
+      v_member_id,
+      v_invite.tenant_id,
+      v_uid,
+      v_invite.role,
+      lower(trim(p_email)),
+      v_invite.department_id,
+      true
+    );
+  ELSE
+    UPDATE bos_tenant_members SET
+      role = v_invite.role,
+      email = lower(trim(p_email)),
+      department_id = COALESCE(v_invite.department_id, department_id),
+      is_active = true,
+      deleted_at = NULL
+    WHERE id = v_member_id;
+  END IF;
+
+  UPDATE bos_tenant_invites SET
+    status = 'accepted',
+    accepted_at = now(),
+    accepted_firebase_uid = v_uid,
+    updated_at = now()
+  WHERE id = v_invite.id;
+
+  INSERT INTO bos_audit_log (id, tenant_id, firebase_uid, action, entity_type, entity_id, meta)
+  VALUES (
+    gen_random_uuid(),
+    v_invite.tenant_id,
+    v_uid,
+    'invite.accept',
+    'bos_tenant_invites',
+    v_invite.id,
+    jsonb_build_object('member_id', v_member_id)
+  );
+
+  RETURN jsonb_build_object(
+    'member_id', v_member_id,
+    'tenant_id', v_invite.tenant_id
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION bos_accept_invite(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION bos_accept_invite(text, text) TO authenticated;

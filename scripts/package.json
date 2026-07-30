@@ -1,0 +1,17 @@
+{
+  "name": "dgyardconnect-scripts",
+  "private": true,
+    "scripts": {
+    "seed-superadmin": "node seed_super_admin.js",
+    "set-user-role": "node set_user_role_by_phone.js",
+    "generate-sitemap": "node generate_sitemap.mjs",
+    "deploy:supabase": "powershell -ExecutionPolicy Bypass -File deploy-supabase.ps1",
+    "supabase": "powershell -ExecutionPolicy Bypass -File supabase-agent.ps1",
+    "supabase:db": "powershell -ExecutionPolicy Bypass -File supabase-agent.ps1 db-push",
+    "supabase:migration": "powershell -ExecutionPolicy Bypass -File supabase-new-migration.ps1",
+    "supabase:functions": "powershell -ExecutionPolicy Bypass -File supabase-agent.ps1 functions"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}

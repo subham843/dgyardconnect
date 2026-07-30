@@ -1,0 +1,462 @@
+{
+  "firestore": {
+    "rules": "firebase/firestore.rules",
+    "indexes": "firebase/firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "firebase/storage.rules"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix functions run build"
+      ]
+    }
+  ],
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "dgyard-connect",
+          "configurations": {
+            "android": "1:541039650342:android:85318029c60f7eba4968e7",
+            "ios": "1:541039650342:ios:8d725f1751f53c984968e7",
+            "web": "1:541039650342:web:f5e5baffa57512174968e7"
+          }
+        }
+      },
+      "android": {
+        "default": {
+          "projectId": "dgyard-connect",
+          "appId": "1:541039650342:android:85318029c60f7eba4968e7",
+          "fileOutput": "android/app/google-services.json"
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "cleanUrls": true,
+    "trailingSlash": false,
+    "redirects": [
+      {
+        "source": "/index.html",
+        "destination": "/",
+        "type": 301
+      },
+      {
+        "source": "/shop",
+        "destination": "/store",
+        "type": 301
+      },
+      {
+        "source": "/shop/**",
+        "destination": "/store",
+        "type": 301
+      },
+      {
+        "source": "/marketplace",
+        "destination": "/store",
+        "type": 301
+      },
+      {
+        "source": "/marketplace/**",
+        "destination": "/store",
+        "type": 301
+      },
+
+      {
+        "source": "/cart",
+        "destination": "/store/cart",
+        "type": 301
+      },
+      {
+        "source": "/auth/**",
+        "destination": "/login",
+        "type": 301
+      },
+      {
+        "source": "/quotation",
+        "destination": "/calculator",
+        "type": 301
+      },
+      {
+        "source": "/faqs",
+        "destination": "/support",
+        "type": 301
+      },
+      {
+        "source": "/faq",
+        "destination": "/support",
+        "type": 301
+      },
+      {
+        "source": "/blog",
+        "destination": "/services",
+        "type": 301
+      },
+
+      {
+        "source": "/smm",
+        "destination": "/services",
+        "type": 301
+      },
+      {
+        "source": "/smm/about",
+        "destination": "/services",
+        "type": 301
+      },
+      {
+        "source": "/smm/contact",
+        "destination": "/contact",
+        "type": 301
+      },
+
+      {
+        "source": "/category/cctv-camera",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/category/home-automation",
+        "destination": "/store/category/smart-home-automation",
+        "type": 301
+      },
+      {
+        "source": "/securing-your-world-the-power-of-professional-cctv-services",
+        "destination": "/services",
+        "type": 301
+      },
+      {
+        "source": "/transforming-houses-into-smart-homes-the-power-of-home-automation",
+        "destination": "/store/category/smart-home-automation",
+        "type": 301
+      },
+
+      {
+        "source": "/product-category/accessories/power-supply",
+        "destination": "/store/category/electrical-power-solutions",
+        "type": 301
+      },
+      {
+        "source": "/product-category/accessories/power-supply/**",
+        "destination": "/store/category/electrical-power-solutions",
+        "type": 301
+      },
+      {
+        "source": "/product-category/accessories",
+        "destination": "/store/category/computer-laptop-accessories",
+        "type": 301
+      },
+      {
+        "source": "/product-category/accessories/**",
+        "destination": "/store/category/computer-laptop-accessories",
+        "type": 301
+      },
+      {
+        "source": "/product-category/analog-hd-camera-kit",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product-category/analog-hd-camera-kit/**",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product-category/analog-hd-camera",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product-category/analog-hd-camera/**",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product-category/analog-hd-camera-2",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product-category/analog-hd-camera-2/**",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product-category/**",
+        "destination": "/store",
+        "type": 301
+      },
+
+      {
+        "source": "/product/2-4mp-ir-dome-camera-20mtr",
+        "destination": "/product/cp-plus-2-4mp-ir-dome-camera-dg-yard",
+        "type": 301
+      },
+      {
+        "source": "/product/2-4mp-ir-bullet-camera-cp-plus",
+        "destination": "/product/2-4mp-ir-bullet-camera-20mtr",
+        "type": 301
+      },
+      {
+        "source": "/product/cp-plus-2-camera-set",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product/cp-plus-3-camera-set",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product/cp-plus-4-camera-set",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product/8ch-1080n-digital-video-recorder",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product/16ch-5m-n-digital-video-recorder-cp-plus",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product/cp-plus-2-4mp-2-night-vision-outdoor-bullet-camera-2-indoor-dome-camera-4-channel-dvr-kit-with-accessories",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product/cp-plus-2-4mp-night-vision-any-7pc-outdoor-bullet-camera-or-indoor-dome-camera-8ch-dvr-without-hd-90-mt-co-axial-cable-4ch-power-supply-1tb-hd-hdmi-bnc-dc",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+      {
+        "source": "/product/cp-plus-2-4mp-night-vision-any-8pc-outdoor-bullet-camera-or-indoor-dome-camera-8ch-dvr-without-hd-90-mt-co-axial-cable-4ch-power-supply-1tb-hd-hdmi-bnc-dc",
+        "destination": "/store/category/cctv-camera-security",
+        "type": 301
+      },
+
+      {
+        "source": "**",
+        "destination": "https://dgyard.com/:splat",
+        "type": 301,
+        "condition": {
+          "host": "dgyard-connect.web.app"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "https://dgyard.com/:splat",
+        "type": 301,
+        "condition": {
+          "host": "dgyard-connect.firebaseapp.com"
+        }
+      }
+    ],
+    "headers": [
+      {
+        "source": "/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=300, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=300, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "**/*.wasm",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/wasm"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "**/*.part.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(jpg|jpeg|gif|png|webp|svg|ico|woff|woff2|ttf|otf|eot)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "canvaskit/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "main.dart.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=0, no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "intl_v8breakiterator_shim.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=0, no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "flutter_bootstrap.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=0, no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "flutter_deferred_boot.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=0, no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "flutter.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=0, no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "flutter_service_worker.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=0, no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "manifest.json",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=0, no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "robots.txt",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "text/plain; charset=utf-8"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=86400"
+          }
+        ]
+      },
+      {
+        "source": "sitemap.xml",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/xml; charset=utf-8"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=86400"
+          }
+        ]
+      },
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "X-Frame-Options",
+            "value": "SAMEORIGIN"
+          },
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Cross-Origin-Opener-Policy",
+            "value": "same-origin-allow-popups"
+          },
+          {
+            "key": "Cross-Origin-Resource-Policy",
+            "value": "cross-origin"
+          },
+          {
+            "key": "Permissions-Policy",
+            "value": "camera=(), microphone=(), geolocation=()"
+          },
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://www.gstatic.com https://www.google.com https://www.recaptcha.net https://www.googletagmanager.com https://www.google-analytics.com https://accounts.google.com https://apis.google.com; worker-src 'self' blob:; connect-src 'self' https: wss: blob: data:; img-src 'self' data: blob: https:; media-src 'self' blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://*.google.com https://www.recaptcha.net https://recaptcha.google.com https://*.supabase.co"
+          }
+        ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
