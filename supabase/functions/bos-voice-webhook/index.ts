@@ -1,8 +1,10 @@
-// Voice provider webhooks (Twilio / Exotel) — status + recording → Sarvam STT via bos-voice-complete.
+// Voice provider webhooks (Twilio / Exotel / Telnyx) — status + recording → Sarvam STT.
+// Telnyx: call.answered → speak script; record-from-answer → call.recording.saved → complete.
 // Also creates/links leads for inbound / missed calls when no matching outbound call.
-// Query: ?tenant_id=…&provider=twilio|exotel
+// Query: ?tenant_id=…&provider=twilio|exotel|telnyx
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { resolveTenantComm } from "../_shared/tenant_comm.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,13 +20,85 @@ function admin() {
   return createClient(url, key);
 }
 
+function decodeClientState(raw: string | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const json = atob(raw);
+    const obj = JSON.parse(json) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v != null) out[k] = String(v);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function telnyxSpeak(
+  apiKey: string,
+  callControlId: string,
+  script: string,
+  language = "en-US",
+) {
+  const text = script.replace(/\s+/g, " ").trim().slice(0, 1500);
+  if (!text || !callControlId) return;
+  await fetch(
+    `https://api.telnyx.com/v2/calls/${encodeURIComponent(callControlId)}/actions/speak`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        payload: text,
+        voice: "female",
+        language,
+      }),
+    },
+  ).catch(() => {});
+}
+
 async function parseBody(req: Request): Promise<Record<string, string>> {
   const ct = req.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
     const j = await req.json().catch(() => ({}));
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(j as Record<string, unknown>)) {
-      if (v != null) out[k] = String(v);
+      if (v != null && typeof v !== "object") out[k] = String(v);
+    }
+    // Telnyx Call Control webhook envelope: { data: { event_type, payload: {...} } }
+    const data = (j as Record<string, unknown>)?.data;
+    if (data && typeof data === "object") {
+      const d = data as Record<string, unknown>;
+      if (d.event_type != null) out.event_type = String(d.event_type);
+      const payload = d.payload;
+      if (payload && typeof payload === "object") {
+        const p = payload as Record<string, unknown>;
+        for (const [k, v] of Object.entries(p)) {
+          if (v != null && typeof v !== "object") out[k] = String(v);
+        }
+        if (p.call_control_id) out.call_control_id = String(p.call_control_id);
+        if (p.call_session_id) out.call_session_id = String(p.call_session_id);
+        if (p.from) out.from = String(p.from);
+        if (p.to) out.to = String(p.to);
+        if (p.direction) out.direction = String(p.direction);
+        if (p.state) out.state = String(p.state);
+        if (p.hangup_cause) out.hangup_cause = String(p.hangup_cause);
+        if (p.client_state) out.client_state = String(p.client_state);
+        const recUrls = p.recording_urls;
+        if (recUrls && typeof recUrls === "object") {
+          const ru = recUrls as Record<string, unknown>;
+          out.recording_url = String(ru.mp3 || ru.wav || Object.values(ru)[0] || "");
+        }
+        if (p.recording_url) out.recording_url = String(p.recording_url);
+        if (p.public_recording_urls && typeof p.public_recording_urls === "object") {
+          const pr = p.public_recording_urls as Record<string, unknown>;
+          out.recording_url = String(pr.mp3 || pr.wav || out.recording_url || "");
+        }
+      }
     }
     return out;
   }
@@ -37,12 +111,12 @@ async function parseBody(req: Request): Promise<Record<string, string>> {
 
 function mapStatus(raw: string): string {
   const s = raw.toLowerCase();
-  if (["completed", "complete", "answered"].includes(s)) return "completed";
-  if (["busy", "no-answer", "no_answer", "failed", "canceled", "cancelled"].includes(s)) {
+  if (["completed", "complete", "answered", "hangup"].includes(s)) return "completed";
+  if (["busy", "no-answer", "no_answer", "failed", "canceled", "cancelled", "rejected"].includes(s)) {
     return "failed";
   }
-  if (["ringing", "queued", "initiated"].includes(s)) return "ringing";
-  if (["in-progress", "in_progress", "ongoing"].includes(s)) return "in_progress";
+  if (["ringing", "queued", "initiated", "call.initiated"].includes(s)) return "ringing";
+  if (["in-progress", "in_progress", "ongoing", "active"].includes(s)) return "in_progress";
   return raw || "in_progress";
 }
 
@@ -118,26 +192,60 @@ Deno.serve(async (req) => {
     const providerHint = (url.searchParams.get("provider") || "").toLowerCase();
     const body = await parseBody(req);
 
+    const eventType = (body.event_type || "").toLowerCase();
+    const isTelnyx = providerHint === "telnyx" || eventType.startsWith("call.") ||
+      Boolean(body.call_control_id);
+
     const callSid =
-      body.CallSid || body.Sid || body.call_sid || body.CallID || "";
+      body.CallSid ||
+      body.Sid ||
+      body.call_sid ||
+      body.CallID ||
+      body.call_control_id ||
+      body.call_session_id ||
+      "";
     const recordingUrl =
       body.RecordingUrl || body.recording_url || "";
-    const statusRaw =
-      body.CallStatus || body.Status || body.call_status || body.DialCallStatus || "";
+    let statusRaw =
+      body.CallStatus || body.Status || body.call_status || body.DialCallStatus || body.state || "";
+    if (isTelnyx && eventType) {
+      if (eventType === "call.answered") statusRaw = "in_progress";
+      else if (eventType === "call.initiated") statusRaw = "ringing";
+      else if (eventType === "call.hangup" || eventType === "call.recording.saved") {
+        statusRaw = statusRaw || "completed";
+        if (/no.?answer|busy|rejected|originator_cancel/i.test(body.hangup_cause || "")) {
+          statusRaw = "no-answer";
+        }
+      }
+    }
     const directionRaw = (body.Direction || body.direction || "").toLowerCase();
     const isInbound =
       directionRaw.includes("inbound") ||
+      directionRaw === "incoming" ||
       body.CallType === "incoming" ||
       url.searchParams.get("inbound") === "1";
     // For inbound, From is caller; for outbound Twilio To is customer
     const customerPhone = isInbound
       ? (body.From || body.from || body.CallFrom || "")
-      : (body.To || body.to || body.CallTo || body.From || "");
+      : (body.To || body.to || body.CallTo || body.From || body.from || "");
+
+    const clientState = decodeClientState(body.client_state);
+    const bosCallIdHint = clientState.bos_call_id || "";
 
     const db = admin();
     let call: Record<string, unknown> | null = null;
 
-    if (callSid) {
+    if (bosCallIdHint) {
+      const { data } = await db
+        .from("bos_voice_calls")
+        .select("*")
+        .eq("id", bosCallIdHint)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (data) call = data as Record<string, unknown>;
+    }
+
+    if (!call && callSid) {
       const { data: rows } = await db
         .from("bos_voice_calls")
         .select("*")
@@ -269,37 +377,84 @@ Deno.serve(async (req) => {
       tenantId,
       callId: call.id as string,
       leadId: (call.lead_id as string) || null,
-      provider: providerHint,
-      eventType: recordingUrl ? "recording" : (mapped || "status"),
-      payload: { callSid, statusRaw, recordingUrl, direction: directionRaw },
+      provider: providerHint || (isTelnyx ? "telnyx" : undefined),
+      eventType: recordingUrl
+        ? "recording"
+        : (eventType || mapped || "status"),
+      payload: { callSid, statusRaw, recordingUrl, direction: directionRaw, eventType },
     });
 
-    const shouldComplete =
-      Boolean(recordingUrl) ||
-      mapped === "completed" ||
-      (body.RecordingStatus || "").toLowerCase() === "completed";
+    // Telnyx: speak queued script when callee answers
+    if (isTelnyx && eventType === "call.answered" && callSid) {
+      try {
+        const comm = await resolveTenantComm(db, tenantId);
+        const apiKey = comm.voiceApiKey || comm.voiceApiToken;
+        const script = String(
+          call.script ||
+            (prevMeta.script_preview as string) ||
+            "Hello from DG.YARD",
+        );
+        if (apiKey) {
+          const lang = script.match(/[\u0900-\u097F]/) ? "hi-IN" : "en-US";
+          await telnyxSpeak(apiKey, callSid, script, lang);
+          await logEvent(db, {
+            tenantId,
+            callId: call.id as string,
+            leadId: (call.lead_id as string) || null,
+            provider: "telnyx",
+            eventType: "speak",
+            payload: { call_control_id: callSid, language: lang },
+          });
+        }
+      } catch (_) { /* non-fatal */ }
+    }
 
-    if (shouldComplete && !isInbound) {
+    const alreadyDone = call.status === "completed" || call.status === "failed";
+    const shouldComplete =
+      !alreadyDone &&
+      !isInbound &&
+      (
+        Boolean(recordingUrl) ||
+        eventType === "call.recording.saved" ||
+        (eventType === "call.hangup" && mapped === "failed") ||
+        (eventType !== "call.answered" &&
+          eventType !== "call.initiated" &&
+          eventType !== "call.speak.started" &&
+          eventType !== "call.speak.ended" &&
+          (mapped === "completed" ||
+            (body.RecordingStatus || "").toLowerCase() === "completed" ||
+            eventType === "call.hangup"))
+      );
+
+    // Prefer STT when we have a recording URL; hangup without recording still closes CRM
+    if (shouldComplete) {
       const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
       const completeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/bos-voice-complete`;
       const outcome =
-        mapped === "failed" && /no-answer|no_answer|busy/i.test(statusRaw)
+        mapped === "failed" && /no-answer|no_answer|busy/i.test(statusRaw + body.hangup_cause)
           ? "no_answer"
           : "interested";
-      await fetch(completeUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify({
-          call_id: call.id,
-          tenant_id: tenantId,
-          audio_url: recordingUrl || undefined,
-          outcome: recordingUrl ? outcome : (mapped === "failed" ? "no_answer" : outcome),
-          status: "completed",
-        }),
-      }).catch(() => {});
+      // On hangup without recording yet, wait briefly for recording.saved if Telnyx recording enabled
+      const waitForRecording =
+        isTelnyx && eventType === "call.hangup" && !recordingUrl && mapped !== "failed";
+      if (!waitForRecording) {
+        await fetch(completeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${key}`,
+          },
+          body: JSON.stringify({
+            call_id: call.id,
+            tenant_id: tenantId,
+            audio_url: recordingUrl || undefined,
+            outcome: recordingUrl || eventType === "call.recording.saved"
+              ? outcome
+              : (mapped === "failed" ? "no_answer" : outcome),
+            status: "completed",
+          }),
+        }).catch(() => {});
+      }
     }
 
     if (providerHint === "twilio" || body.AccountSid) {
@@ -315,6 +470,8 @@ Deno.serve(async (req) => {
         recording: Boolean(recordingUrl),
         status: mapped,
         inbound: isInbound,
+        event_type: eventType || null,
+        spoke: isTelnyx && eventType === "call.answered",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

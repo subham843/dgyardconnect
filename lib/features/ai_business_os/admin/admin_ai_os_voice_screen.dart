@@ -32,6 +32,7 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
   bool _dueOnly = false;
   bool _hideStub = false;
   String? _statusFilter;
+  String _activeProvider = 'stub';
 
   @override
   void initState() {
@@ -48,11 +49,16 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
     );
     final leads = await _repo.listLeads();
     final events = await _repo.listVoiceEvents(limit: 30);
+    String provider = 'stub';
+    try {
+      provider = await _repo.resolveActiveVoiceProvider();
+    } catch (_) {}
     if (mounted) {
       setState(() {
         _items = items;
         _leads = leads;
         _events = events;
+        _activeProvider = provider;
         _loading = false;
       });
     }
@@ -392,6 +398,26 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
           : null,
       body: Column(
         children: [
+          Material(
+            color: Colors.teal.shade50,
+            child: ListTile(
+              dense: true,
+              leading: const Icon(Icons.settings_phone, size: 20),
+              title: Text('Active provider: $_activeProvider'),
+              subtitle: Text(
+                _activeProvider == 'telnyx'
+                    ? 'Telnyx: speak-on-answer + record → STT via webhook'
+                    : _activeProvider == 'stub'
+                        ? 'Stub mode — set live provider in Settings'
+                        : 'Live dial when secrets are set in Settings',
+                style: const TextStyle(fontSize: 12),
+              ),
+              trailing: TextButton(
+                onPressed: _load,
+                child: const Text('Refresh'),
+              ),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.all(12),
             child: Wrap(

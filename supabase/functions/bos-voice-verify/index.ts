@@ -136,6 +136,32 @@ Deno.serve(async (req) => {
       live = Boolean(comm.voiceApiKey && comm.voiceNumber);
       detail = { note: "Credentials present — verified on Test dial" };
       if (!live) error = "Missing MyOperator token or from number";
+    } else if (provider === "telnyx") {
+      const apiKey = comm.voiceApiKey || comm.voiceApiToken;
+      const connectionId = comm.voiceExtra.connection_id || comm.voiceAccountSid;
+      checks.api_key = Boolean(apiKey);
+      checks.connection_id = Boolean(connectionId);
+      checks.from = Boolean(comm.voiceNumber);
+      if (apiKey) {
+        const res = await fetch("https://api.telnyx.com/v2/phone_numbers?page[size]=1", {
+          headers: {
+            Authorization: apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`,
+            Accept: "application/json",
+          },
+        });
+        detail = await res.json().catch(() => ({}));
+        live = res.ok;
+        if (!res.ok) error = `Telnyx API key check ${res.status}`;
+        else if (!connectionId) {
+          live = false;
+          error = "API key OK — set Connection ID (Voice API app)";
+        } else if (!comm.voiceNumber) {
+          live = false;
+          error = "API key OK — set Telnyx From number";
+        }
+      } else {
+        error = "Missing Telnyx API key";
+      }
     } else {
       error = `Unknown provider ${provider}`;
     }

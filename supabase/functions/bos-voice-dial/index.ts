@@ -1,5 +1,5 @@
 // Place outbound voice call via tenant provider secrets.
-// Providers: stub | exotel | twilio | plivo | vonage | knowlarity
+// Providers: stub | exotel | twilio | plivo | vonage | knowlarity | myoperator | telnyx
 // Body: { call_id, tenant_id? }
 // Secrets live under api_secrets.voice.<provider> (legacy flat voice.* still works).
 
@@ -360,6 +360,83 @@ async function dialMyOperator(comm: TenantCommConfig, phone: string): Promise<Di
   };
 }
 
+async function dialTelnyx(
+  comm: TenantCommConfig,
+  phone: string,
+  script: string,
+  tenantId: string,
+  callId: string,
+): Promise<DialResult> {
+  const apiKey = comm.voiceApiKey || comm.voiceApiToken;
+  const connectionId = comm.voiceExtra.connection_id || comm.voiceAccountSid;
+  const from = comm.voiceNumber;
+  if (missing(apiKey, connectionId, from)) {
+    return {
+      ok: false,
+      sim: true,
+      status: "queued",
+      meta: { reason: "telnyx_missing_api_key_connection_id_or_from" },
+    };
+  }
+  const webhookBase = Deno.env.get("SUPABASE_URL") || "";
+  const webhookUrl = webhookBase
+    ? `${webhookBase}/functions/v1/bos-voice-webhook?tenant_id=${encodeURIComponent(tenantId)}&provider=telnyx`
+    : undefined;
+  const body: Record<string, unknown> = {
+    connection_id: connectionId,
+    to: phone,
+    from,
+    answering_machine_detection: "disabled",
+    // Record from answer → call.recording.saved webhook → Sarvam STT
+    record: "record-from-answer",
+  };
+  if (webhookUrl) {
+    body.webhook_url = webhookUrl;
+    body.webhook_url_method = "POST";
+  }
+  // Round-trip our call id so speak-on-answer can load the script
+  body.client_state = btoa(JSON.stringify({
+    bos_call_id: callId,
+    tenant_id: tenantId,
+  }));
+
+  const res = await fetch("https://api.telnyx.com/v2/calls", {
+    method: "POST",
+    headers: {
+      Authorization: apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return {
+      ok: false,
+      sim: false,
+      status: "failed",
+      meta: { telnyx: payload, http_status: res.status },
+      error: `Telnyx dial failed (${res.status})`,
+    };
+  }
+  const data = (payload as Record<string, Record<string, unknown>>)?.data ?? {};
+  const callControlId = String(
+    data.call_control_id || data.call_session_id || data.call_leg_id || "",
+  ) || undefined;
+  return {
+    ok: true,
+    sim: false,
+    status: "in_progress",
+    meta: {
+      telnyx: payload,
+      http_status: res.status,
+      record: "record-from-answer",
+      script_preview: script.slice(0, 80),
+    },
+    providerCallId: callControlId,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -398,6 +475,7 @@ Deno.serve(async (req) => {
       result = await dialVonage(comm, phone, script);
     } else if (provider === "knowlarity") result = await dialKnowlarity(comm, phone);
     else if (provider === "myoperator") result = await dialMyOperator(comm, phone);
+    else if (provider === "telnyx") result = await dialTelnyx(comm, phone, script, tenantId, callId);
     else {
       result = {
         ok: false,
@@ -405,7 +483,7 @@ Deno.serve(async (req) => {
         status: "ringing",
         meta: {
           reason: "stub_provider",
-          note: "Set Settings → Voice provider to exotel/twilio/plivo/vonage/knowlarity/myoperator",
+          note: "Set Settings → Voice provider to exotel/twilio/plivo/vonage/knowlarity/myoperator/telnyx",
         },
       };
     }

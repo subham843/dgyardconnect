@@ -47,6 +47,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   bool _previewingTts = false;
   String? _webhookTwilio;
   String? _webhookExotel;
+  String? _webhookTelnyx;
   final _ttsPreviewCtrl = TextEditingController(
     text: 'Namaste, DG.YARD se call aa raha hai. Aapke enquiry ke baare mein baat karni thi.',
   );
@@ -241,6 +242,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
       try {
         _webhookTwilio = await _repo.voiceWebhookUrl(provider: 'twilio');
         _webhookExotel = await _repo.voiceWebhookUrl(provider: 'exotel');
+        _webhookTelnyx = await _repo.voiceWebhookUrl(provider: 'telnyx');
       } catch (_) {}
       setState(() => _loading = false);
     }
@@ -521,6 +523,12 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           }
           if (_voiceSidCtrl.text.trim().isNotEmpty) {
             nested['company_id'] = _voiceSidCtrl.text.trim();
+          }
+          break;
+        case 'telnyx':
+          if (_voiceKeyCtrl.text.trim().isNotEmpty) nested['api_key'] = _voiceKeyCtrl.text.trim();
+          if (_voiceSidCtrl.text.trim().isNotEmpty) {
+            nested['connection_id'] = _voiceSidCtrl.text.trim();
           }
           break;
         default: // exotel
@@ -931,6 +939,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                     DropdownMenuItem(value: 'stub', child: Text('Stub (simulate)')),
                     DropdownMenuItem(value: 'exotel', child: Text('Exotel')),
                     DropdownMenuItem(value: 'twilio', child: Text('Twilio')),
+                    DropdownMenuItem(value: 'telnyx', child: Text('Telnyx')),
                     DropdownMenuItem(value: 'plivo', child: Text('Plivo')),
                     DropdownMenuItem(value: 'vonage', child: Text('Vonage (Nexmo)')),
                     DropdownMenuItem(value: 'knowlarity', child: Text('Knowlarity')),
@@ -951,8 +960,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 TextField(
                   controller: _voiceNumberCtrl,
                   decoration: InputDecoration(
-                    labelText: _voiceProvider == 'twilio' || _voiceProvider == 'plivo'
-                        ? 'Caller ID / From number'
+                    labelText: _voiceProvider == 'twilio' ||
+                            _voiceProvider == 'plivo' ||
+                            _voiceProvider == 'telnyx'
+                        ? 'Caller ID / From number (E.164)'
                         : 'Voice caller number (ExoPhone / DID / agent)',
                   ),
                 ),
@@ -983,6 +994,45 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                     controller: _voiceKeyCtrl,
                     decoration: const InputDecoration(labelText: 'Twilio Auth Token'),
                     obscureText: true,
+                  ),
+                ],
+                if (_voiceProvider == 'telnyx') ...[
+                  TextField(
+                    controller: _voiceKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'Telnyx API key'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceSidCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Telnyx Connection ID (Voice API / Call Control app)',
+                    ),
+                  ),
+                  Text(
+                    '1) Mission Control → Auth → API Key\n'
+                    '2) Voice → Call Control Applications → Connection ID\n'
+                    '3) Assign a Telnyx number + Outbound Voice Profile\n'
+                    '4) Paste webhook URL below (also sent on each dial)\n'
+                    'Dial uses record-from-answer; answered calls speak your script automatically.',
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          const ClipboardData(text: 'https://portal.telnyx.com/#/app/call-control/applications'),
+                        );
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Telnyx Call Control apps URL copied — open in browser'),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.open_in_new, size: 16),
+                      label: const Text('Copy Mission Control Call Control URL'),
+                    ),
                   ),
                 ],
                 if (_voiceProvider == 'plivo') ...[
@@ -1161,6 +1211,17 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                     trailing: IconButton(
                       icon: const Icon(Icons.copy),
                       onPressed: () => _copyWebhook(_webhookExotel, 'Exotel'),
+                    ),
+                  ),
+                if (_webhookTelnyx != null)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Telnyx webhook URL'),
+                    subtitle: Text(_webhookTelnyx!, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.copy),
+                      onPressed: () => _copyWebhook(_webhookTelnyx, 'Telnyx'),
                     ),
                   ),
                 const SizedBox(height: 24),

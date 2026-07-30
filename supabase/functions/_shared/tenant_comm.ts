@@ -176,6 +176,23 @@ export function resolveVoiceCreds(
     };
   }
 
+  if (provider === "telnyx") {
+    return {
+      voiceProvider: provider,
+      voiceApiKey: pick.api_key || pick.api_token || envKey("TELNYX_API_KEY"),
+      voiceApiToken: pick.api_key || pick.api_token || envKey("TELNYX_API_KEY"),
+      voiceAccountSid:
+        pick.connection_id || pick.application_id || pick.account_sid ||
+        envKey("TELNYX_CONNECTION_ID"),
+      voiceNumber:
+        cfg.voice?.number || pick.number || pick.from || envKey("TELNYX_NUMBER"),
+      voiceExtra: {
+        connection_id:
+          pick.connection_id || pick.application_id || envKey("TELNYX_CONNECTION_ID") || "",
+      },
+    };
+  }
+
   // stub / unknown — still surface any flat legacy keys for debugging
   return {
     voiceProvider: provider || "stub",
