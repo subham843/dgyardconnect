@@ -67,14 +67,20 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
     }
   }
 
+  List<Map<String, dynamic>> _eventsFor(String callId) {
+    final list = _events.where((e) => '${e['call_id']}' == callId).toList();
+    list.sort((a, b) {
+      final ta = DateTime.tryParse('${a['created_at']}') ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final tb = DateTime.tryParse('${b['created_at']}') ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return ta.compareTo(tb);
+    });
+    return list;
+  }
+
   String _eventStripFor(String callId) {
-    final related = _events
-        .where((e) => '${e['call_id']}' == callId)
-        .take(6)
-        .map((e) => '${e['event_type'] ?? '?'}')
-        .toList();
+    final related = _eventsFor(callId).map((e) => '${e['event_type'] ?? '?'}').toList();
     if (related.isEmpty) return '';
-    return related.reversed.join(' → ');
+    return related.join(' → ');
   }
 
   void _denied() {
@@ -611,6 +617,39 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                             Text(c.aiSummary!),
                                           ],
                                           if (c.nextAction != null) Text('Next action: ${c.nextAction}'),
+                                          if (_eventsFor(c.id).isNotEmpty) ...[
+                                            const SizedBox(height: 12),
+                                            const Text('Event timeline', style: TextStyle(fontWeight: FontWeight.bold)),
+                                            const SizedBox(height: 4),
+                                            ..._eventsFor(c.id).map((e) {
+                                              final at = e['created_at']?.toString();
+                                              final short = at != null && at.length >= 19
+                                                  ? at.substring(0, 19).replaceFirst('T', ' ')
+                                                  : (at ?? '');
+                                              return Padding(
+                                                padding: const EdgeInsets.only(bottom: 4),
+                                                child: Row(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Icon(
+                                                      Icons.circle,
+                                                      size: 8,
+                                                      color: Colors.teal.shade700,
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Expanded(
+                                                      child: Text(
+                                                        '${e['event_type'] ?? 'event'}'
+                                                        '${e['provider'] != null ? ' · ${e['provider']}' : ''}'
+                                                        '${short.isNotEmpty ? ' · $short' : ''}',
+                                                        style: const TextStyle(fontSize: 12),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            }),
+                                          ],
                                         ],
                                       ),
                                     ),

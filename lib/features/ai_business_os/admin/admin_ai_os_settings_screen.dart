@@ -51,6 +51,11 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   final _ttsPreviewCtrl = TextEditingController(
     text: 'Namaste, DG.YARD se call aa raha hai. Aapke enquiry ke baare mein baat karni thi.',
   );
+  final _inboundGreetingCtrl = TextEditingController(
+    text: 'Namaste, DG.YARD mein aapka swagat hai. Please hold — hum aapki madad ke liye yahan hain.',
+  );
+  final _telnyxPublicKeyCtrl = TextEditingController();
+  bool _autoCallbackMissed = true;
 
   final _nameCtrl = TextEditingController();
   final _primaryCtrl = TextEditingController();
@@ -116,6 +121,8 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     _workEndCtrl.dispose();
     _aiAgentNameCtrl.dispose();
     _ttsPreviewCtrl.dispose();
+    _inboundGreetingCtrl.dispose();
+    _telnyxPublicKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -180,6 +187,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
         if (vo is Map) {
           _voiceNumberCtrl.text = '${vo['number'] ?? ''}';
           if (vo['provider'] != null) _voiceProvider = '${vo['provider']}';
+          if (vo['inbound_greeting'] != null && '${vo['inbound_greeting']}'.isNotEmpty) {
+            _inboundGreetingCtrl.text = '${vo['inbound_greeting']}';
+          }
+          _autoCallbackMissed = vo['auto_callback_missed'] != false;
         }
       }
       final settingsJson = settings?['settings'];
@@ -450,6 +461,8 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
         'voice': {
           'provider': _voiceProvider,
           'number': _voiceNumberCtrl.text.trim(),
+          'inbound_greeting': _inboundGreetingCtrl.text.trim(),
+          'auto_callback_missed': _autoCallbackMissed,
         },
       },
       apiKeysPlaceholder: {
@@ -474,7 +487,8 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
         _voiceTokenCtrl.text.trim().isNotEmpty ||
         _voiceSidCtrl.text.trim().isNotEmpty ||
         _voiceNumberCtrl.text.trim().isNotEmpty ||
-        _voicePrivateKeyCtrl.text.trim().isNotEmpty) {
+        _voicePrivateKeyCtrl.text.trim().isNotEmpty ||
+        _telnyxPublicKeyCtrl.text.trim().isNotEmpty) {
       // Per-provider bucket: api_secrets.voice.exotel / .twilio / .plivo / ...
       final providerKey = _voiceProvider == 'stub' ? 'exotel' : _voiceProvider;
       final nested = <String, dynamic>{
@@ -530,6 +544,9 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           if (_voiceSidCtrl.text.trim().isNotEmpty) {
             nested['connection_id'] = _voiceSidCtrl.text.trim();
           }
+          if (_telnyxPublicKeyCtrl.text.trim().isNotEmpty) {
+            nested['public_key'] = _telnyxPublicKeyCtrl.text.trim();
+          }
           break;
         default: // exotel
           if (_voiceKeyCtrl.text.trim().isNotEmpty) nested['api_key'] = _voiceKeyCtrl.text.trim();
@@ -560,6 +577,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
       _voiceTokenCtrl.clear();
       _voiceSidCtrl.clear();
       _voicePrivateKeyCtrl.clear();
+      _telnyxPublicKeyCtrl.clear();
       _openaiCtrl.clear();
       _sarvamKeyCtrl.clear();
     }
@@ -1026,13 +1044,23 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                         style: TextStyle(color: Colors.teal.shade800, fontSize: 12),
                       ),
                     ),
+                  TextField(
+                    controller: _telnyxPublicKeyCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Telnyx public key (optional webhook verify)',
+                      hintText: 'Base64 Ed25519 public key from Mission Control',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
                   Text(
                     '1) Mission Control → Auth → API Key\n'
                     '2) Voice → Call Control Applications → Connection ID\n'
                     '3) Assign a Telnyx number + Outbound Voice Profile\n'
                     '4) Paste webhook URL below (also sent on each dial)\n'
+                    '5) Optional: paste Public Key to verify webhook signatures\n'
                     'Dial uses record-from-answer; answered calls speak your script automatically.\n'
-                    'Inbound: call.initiated → answer + Hindi/English greeting + lead.',
+                    'Inbound: call.initiated → answer + greeting + lead.',
                     style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
                   ),
                   Align(
@@ -1137,6 +1165,23 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                     labelText: 'TTS preview script (Hinglish/Hindi)',
                     border: OutlineInputBorder(),
                   ),
+                ),
+                TextField(
+                  controller: _inboundGreetingCtrl,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Inbound call greeting (Telnyx/Exotel answer)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Auto-queue callback on missed inbound'),
+                  subtitle: const Text('Creates outbound follow-up ~5 min later'),
+                  value: _autoCallbackMissed,
+                  onChanged: (BosPermissions.canManageSettings || BosPermissions.canEdit)
+                      ? (v) => setState(() => _autoCallbackMissed = v)
+                      : null,
                 ),
                 const SizedBox(height: 8),
                 TextField(

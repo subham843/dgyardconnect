@@ -348,6 +348,93 @@ class _AdminAiOsBillingScreenState extends State<AdminAiOsBillingScreen> {
                 ),
                 const SizedBox(height: 16),
                 const Text('Usage (30 days)', style: TextStyle(fontWeight: FontWeight.bold)),
+                Builder(
+                  builder: (context) {
+                    final used = (totals['voice_minutes'] is num)
+                        ? (totals['voice_minutes'] as num).toDouble()
+                        : 0.0;
+                    final limRaw = limits['voice_minutes'];
+                    final lim = limRaw is num ? limRaw.toDouble() : null;
+                    final unlimited = lim != null && lim < 0;
+                    final pct = (lim == null || unlimited || lim <= 0)
+                        ? 0.0
+                        : (used / lim).clamp(0.0, 1.0);
+                    final near = lim != null && !unlimited && lim > 0 && used / lim >= 0.8;
+                    final over = lim != null && !unlimited && lim > 0 && used >= lim;
+                    return Card(
+                      color: over
+                          ? Colors.orange.shade50
+                          : near
+                              ? Colors.amber.shade50
+                              : null,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.phone_in_talk,
+                                  color: over ? Colors.orange.shade900 : Colors.teal,
+                                ),
+                                const SizedBox(width: 8),
+                                const Expanded(
+                                  child: Text(
+                                    'Voice minutes',
+                                    style: TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                                Text(
+                                  unlimited
+                                      ? '${used.toStringAsFixed(0)} · unlimited'
+                                      : lim == null
+                                          ? used.toStringAsFixed(0)
+                                          : '${used.toStringAsFixed(0)} / ${lim.toStringAsFixed(0)}',
+                                ),
+                              ],
+                            ),
+                            if (lim != null && !unlimited) ...[
+                              const SizedBox(height: 8),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: pct,
+                                  minHeight: 8,
+                                  backgroundColor: Colors.grey.shade200,
+                                  color: over
+                                      ? Colors.orange
+                                      : near
+                                          ? Colors.amber.shade700
+                                          : Colors.teal,
+                                ),
+                              ),
+                            ],
+                            if (near || over) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                over
+                                    ? 'Voice plan limit reached — upgrade to continue live dials.'
+                                    : 'Approaching voice minute limit — consider upgrading.',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.orange.shade900,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              FilledButton.tonal(
+                                onPressed: _paying || _plans.isEmpty
+                                    ? null
+                                    : () => _payForPlan(_plans.last),
+                                child: const Text('Upgrade plan'),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 if (overLimitMetrics.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Card(

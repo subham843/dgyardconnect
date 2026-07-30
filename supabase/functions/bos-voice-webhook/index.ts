@@ -5,19 +5,107 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { resolveTenantComm } from "../_shared/tenant_comm.ts";
+import { verifyTelnyxSignature } from "../_shared/telnyx_webhook.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, telnyx-signature-ed25519, telnyx-timestamp",
 };
 
 const DEFAULT_TENANT = "b0000000-0000-4000-8000-000000000001";
+const DEFAULT_INBOUND_GREETING =
+  "Namaste, DG.YARD mein aapka swagat hai. Please hold — hum aapki madad ke liye yahan hain.";
 
 function admin() {
   const url = Deno.env.get("SUPABASE_URL") ?? "";
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   if (!url || !key) throw new Error("Supabase not configured");
   return createClient(url, key);
+}
+
+async function loadVoiceSettings(
+  db: ReturnType<typeof admin>,
+  tenantId: string,
+): Promise<{
+  inboundGreeting: string;
+  autoCallbackMissed: boolean;
+  telnyxPublicKey: string;
+}> {
+  const { data: row } = await db
+    .from("bos_tenant_settings")
+    .select("api_config, api_secrets, settings")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  const cfg = (row?.api_config ?? {}) as Record<string, Record<string, unknown>>;
+  const voice = cfg.voice ?? {};
+  const aiSales = ((row?.settings as Record<string, unknown>)?.ai_sales ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const secrets = (row?.api_secrets ?? {}) as Record<string, unknown>;
+  const voiceSec = (secrets.voice ?? {}) as Record<string, unknown>;
+  const telnyx = (voiceSec.telnyx ?? {}) as Record<string, string>;
+  const greeting = String(
+    voice.inbound_greeting ||
+      aiSales.inbound_greeting ||
+      DEFAULT_INBOUND_GREETING,
+  ).trim();
+  const autoRaw = voice.auto_callback_missed;
+  const autoCallbackMissed = autoRaw === false || autoRaw === "false" ? false : true;
+  return {
+    inboundGreeting: greeting || DEFAULT_INBOUND_GREETING,
+    autoCallbackMissed,
+    telnyxPublicKey: String(telnyx.public_key || Deno.env.get("TELNYX_PUBLIC_KEY") || ""),
+  };
+}
+
+async function queueMissedCallback(
+  db: ReturnType<typeof admin>,
+  opts: {
+    tenantId: string;
+    leadId: string | null;
+    phone: string;
+    provider: string;
+  },
+) {
+  const id = crypto.randomUUID();
+  const when = new Date(Date.now() + 5 * 60_000).toISOString();
+  const script =
+    "Hi, this is DG.YARD calling back — we missed your call earlier. " +
+    "Do you have two minutes to discuss your enquiry?";
+  await db.from("bos_voice_calls").insert({
+    id,
+    tenant_id: opts.tenantId,
+    lead_id: opts.leadId,
+    phone: opts.phone,
+    direction: "outbound",
+    status: "queued",
+    provider: opts.provider || "stub",
+    script,
+    scheduled_at: when,
+    meta: {
+      voice_provider: opts.provider || "stub",
+      from_missed_inbound: true,
+      scheduled_at: when,
+    },
+  });
+  if (opts.leadId) {
+    await db.from("bos_activities").insert({
+      id: crypto.randomUUID(),
+      tenant_id: opts.tenantId,
+      lead_id: opts.leadId,
+      activity_type: "voice_callback_queued",
+      subject: "Missed-call callback queued",
+      body: `Auto follow-up for ${opts.phone} at ${when}`,
+      due_at: when,
+    });
+    await db.from("bos_leads").update({
+      next_follow_up_at: when,
+      updated_at: new Date().toISOString(),
+    }).eq("id", opts.leadId);
+  }
+  return id;
 }
 
 function decodeClientState(raw: string | undefined): Record<string, string> {
@@ -87,15 +175,13 @@ function scheduleDeferredComplete(
   }
 }
 
-async function parseBody(req: Request): Promise<Record<string, string>> {
-  const ct = req.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    const j = await req.json().catch(() => ({}));
+async function parseBodyFromRaw(raw: string, ct: string): Promise<Record<string, string>> {
+  if (ct.includes("application/json") || raw.trim().startsWith("{")) {
+    const j = JSON.parse(raw || "{}");
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(j as Record<string, unknown>)) {
       if (v != null && typeof v !== "object") out[k] = String(v);
     }
-    // Telnyx Call Control webhook envelope: { data: { event_type, payload: {...} } }
     const data = (j as Record<string, unknown>)?.data;
     if (data && typeof data === "object") {
       const d = data as Record<string, unknown>;
@@ -128,11 +214,16 @@ async function parseBody(req: Request): Promise<Record<string, string>> {
     }
     return out;
   }
-  const text = await req.text();
-  const params = new URLSearchParams(text);
+  const params = new URLSearchParams(raw);
   const out: Record<string, string> = {};
   for (const [k, v] of params.entries()) out[k] = v;
   return out;
+}
+
+async function parseBody(req: Request): Promise<Record<string, string>> {
+  const ct = req.headers.get("content-type") || "";
+  const raw = await req.text();
+  return parseBodyFromRaw(raw, ct);
 }
 
 function mapStatus(raw: string): string {
@@ -216,7 +307,28 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const tenantHint = url.searchParams.get("tenant_id") || DEFAULT_TENANT;
     const providerHint = (url.searchParams.get("provider") || "").toLowerCase();
-    const body = await parseBody(req);
+    const ct = req.headers.get("content-type") || "";
+    const rawBody = await req.text();
+    const db = admin();
+    const voiceSettings = await loadVoiceSettings(db, tenantHint);
+
+    // Optional Telnyx signature check when public key is configured
+    if (providerHint === "telnyx" || req.headers.get("telnyx-signature-ed25519")) {
+      const okSig = verifyTelnyxSignature({
+        rawBody,
+        signatureB64: req.headers.get("telnyx-signature-ed25519"),
+        timestamp: req.headers.get("telnyx-timestamp"),
+        publicKeyB64: voiceSettings.telnyxPublicKey,
+      });
+      if (!okSig) {
+        return new Response(JSON.stringify({ error: "invalid telnyx signature" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    const body = await parseBodyFromRaw(rawBody, ct);
 
     const eventType = (body.event_type || "").toLowerCase();
     const isTelnyx = providerHint === "telnyx" || eventType.startsWith("call.") ||
@@ -250,7 +362,6 @@ Deno.serve(async (req) => {
       directionRaw === "incoming" ||
       body.CallType === "incoming" ||
       url.searchParams.get("inbound") === "1";
-    // For inbound, From is caller; for outbound Twilio To is customer
     const customerPhone = isInbound
       ? (body.From || body.from || body.CallFrom || "")
       : (body.To || body.to || body.CallTo || body.From || body.from || "");
@@ -258,7 +369,6 @@ Deno.serve(async (req) => {
     const clientState = decodeClientState(body.client_state);
     const bosCallIdHint = clientState.bos_call_id || "";
 
-    const db = admin();
     let call: Record<string, unknown> | null = null;
 
     if (bosCallIdHint) {
@@ -319,8 +429,7 @@ Deno.serve(async (req) => {
       const callId = crypto.randomUUID();
       const mapped = statusRaw ? mapStatus(statusRaw) : (eventType === "call.initiated" ? "ringing" : "completed");
       const missed = mappedIsMissed(statusRaw);
-      const greeting =
-        "Namaste, DG.YARD mein aapka swagat hai. Please hold — hum aapki madad ke liye yahan hain.";
+      const greeting = voiceSettings.inboundGreeting;
       await db.from("bos_voice_calls").insert({
         id: callId,
         tenant_id: tenantHint,
@@ -338,6 +447,7 @@ Deno.serve(async (req) => {
           webhook_at: new Date().toISOString(),
           recording_url: recordingUrl || null,
           audio_url: recordingUrl || null,
+          callback_queued: missed && voiceSettings.autoCallbackMissed,
         },
       });
       call = {
@@ -347,7 +457,10 @@ Deno.serve(async (req) => {
         phone: customerPhone,
         script: greeting,
         status: mapped,
-        meta: {},
+        meta: {
+          missed,
+          callback_queued: missed && voiceSettings.autoCallbackMissed,
+        },
       };
       await logEvent(db, {
         tenantId: tenantHint,
@@ -367,6 +480,24 @@ Deno.serve(async (req) => {
           body: `Phone ${customerPhone} · ${statusRaw || eventType || "received"}`,
           completed_at: new Date().toISOString(),
         });
+      }
+      if (missed && voiceSettings.autoCallbackMissed && customerPhone) {
+        try {
+          const cbId = await queueMissedCallback(db, {
+            tenantId: tenantHint,
+            leadId,
+            phone: customerPhone,
+            provider: providerHint || (isTelnyx ? "telnyx" : "stub"),
+          });
+          await logEvent(db, {
+            tenantId: tenantHint,
+            callId: cbId,
+            leadId,
+            provider: providerHint || (isTelnyx ? "telnyx" : undefined),
+            eventType: "missed_callback_queued",
+            payload: { from_inbound: callId, phone: customerPhone },
+          });
+        } catch (_) { /* non-fatal */ }
       }
     }
 
@@ -438,8 +569,7 @@ Deno.serve(async (req) => {
         if (apiKey) {
           await telnyxAnswer(apiKey, callSid);
           const greeting = String(
-            call.script ||
-              "Namaste, DG.YARD mein aapka swagat hai. Please hold — hum aapki madad ke liye yahan hain.",
+            call.script || voiceSettings.inboundGreeting || DEFAULT_INBOUND_GREETING,
           );
           const lang = greeting.match(/[\u0900-\u097F]/) ? "hi-IN" : "en-US";
           // brief pause so answer settles
@@ -488,6 +618,37 @@ Deno.serve(async (req) => {
             payload: { call_control_id: callSid, language: lang },
           });
         }
+      } catch (_) { /* non-fatal */ }
+    }
+
+    // Missed inbound hangup on existing call → queue callback once
+    if (
+      isInbound &&
+      voiceSettings.autoCallbackMissed &&
+      customerPhone &&
+      !prevMeta.callback_queued &&
+      (mappedIsMissed(statusRaw) ||
+        (eventType === "call.hangup" && mapped === "failed"))
+    ) {
+      try {
+        const cbId = await queueMissedCallback(db, {
+          tenantId,
+          leadId: (call.lead_id as string) || null,
+          phone: customerPhone || String(call.phone || ""),
+          provider: providerHint || (isTelnyx ? "telnyx" : "stub"),
+        });
+        await db.from("bos_voice_calls").update({
+          meta: { ...meta, callback_queued: true, callback_call_id: cbId },
+          updated_at: new Date().toISOString(),
+        }).eq("id", call.id);
+        await logEvent(db, {
+          tenantId,
+          callId: cbId,
+          leadId: (call.lead_id as string) || null,
+          provider: providerHint || (isTelnyx ? "telnyx" : undefined),
+          eventType: "missed_callback_queued",
+          payload: { from_inbound: call.id, phone: customerPhone },
+        });
       } catch (_) { /* non-fatal */ }
     }
 
