@@ -100,6 +100,91 @@ class _AdminAiOsReportsScreenState extends State<AdminAiOsReportsScreen> {
                     ],
                   ),
                   const SizedBox(height: 24),
+                  const Text('Voice funnel', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Builder(
+                    builder: (_) {
+                      final funnel = <MapEntry<String, num>>[
+                        MapEntry('Answered', (_stats['voice_answered'] as num?) ?? 0),
+                        MapEntry('Missed', (_stats['voice_missed'] as num?) ?? 0),
+                        MapEntry('Callback queued', (_stats['voice_callback_queued'] as num?) ?? 0),
+                        MapEntry('Dialed', (_stats['voice_dialed'] as num?) ?? 0),
+                        MapEntry('Completed', (_stats['voice_completed'] as num?) ?? 0),
+                      ];
+                      final maxF = funnel.fold<num>(0, (a, e) => e.value > a ? e.value : a);
+                      if (maxF <= 0) {
+                        return const Text('No voice funnel data yet');
+                      }
+                      return Column(
+                        children: funnel.map((e) {
+                          final pct = e.value / maxF.toDouble();
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(child: Text(e.key)),
+                                    Text('${e.value}'),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: LinearProgressIndicator(
+                                    value: pct.clamp(0.0, 1.0),
+                                    minHeight: 8,
+                                    backgroundColor: Colors.grey.shade200,
+                                    color: Colors.teal,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Voice stub vs live', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Builder(
+                    builder: (_) {
+                      final live = ((_stats['voice_live'] as num?) ?? 0).toDouble();
+                      final stub = ((_stats['voice_stub'] as num?) ?? 0).toDouble();
+                      final total = live + stub;
+                      if (total <= 0) return const Text('No voice calls yet');
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Live ${live.toInt()} · Stub ${stub.toInt()} · ${((live / total) * 100).round()}% live'),
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: SizedBox(
+                              height: 14,
+                              child: Row(
+                                children: [
+                                  if (live > 0)
+                                    Expanded(
+                                      flex: (live * 100).round().clamp(1, 10000),
+                                      child: Container(color: Colors.green.shade400),
+                                    ),
+                                  if (stub > 0)
+                                    Expanded(
+                                      flex: (stub * 100).round().clamp(1, 10000),
+                                      child: Container(color: Colors.orange.shade300),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 24),
                   const Text('Lead funnel by stage', style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   if (byStage.isEmpty)

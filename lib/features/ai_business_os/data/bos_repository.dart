@@ -2953,7 +2953,7 @@ ${e.answers}
         .eq('tenant_id', tid);
     final voiceRows = await client
         .from('bos_voice_calls')
-        .select('status,meta,duration_sec,direction')
+        .select('status,meta,duration_sec,direction,outcome')
         .eq('tenant_id', tid)
         .isFilter('deleted_at', null);
     var voiceLive = 0;
@@ -2962,6 +2962,11 @@ ${e.answers}
     var voiceInbound = 0;
     var voiceDurationSum = 0;
     var voiceDurationN = 0;
+    var voiceAnswered = 0;
+    var voiceMissed = 0;
+    var voiceCallbackQueued = 0;
+    var voiceDialed = 0;
+    var voiceCompleted = 0;
     final voiceList = voiceRows as List;
     for (final r in voiceList) {
       final meta = r['meta'] is Map ? Map<String, dynamic>.from(r['meta'] as Map) : <String, dynamic>{};
@@ -2972,10 +2977,30 @@ ${e.answers}
         voiceLive++;
       }
       if (meta['stt_provider'] != null && meta['stt_sim'] != true) voiceSttLive++;
-      if (r['direction'] == 'inbound' || meta['inbound'] == true) voiceInbound++;
-      final d = (r['duration_sec'] as num?)?.toInt();
-      if (d != null && d > 0) {
-        voiceDurationSum += d;
+      final inbound = r['direction'] == 'inbound' || meta['inbound'] == true;
+      if (inbound) voiceInbound++;
+      final status = '${r['status'] ?? ''}';
+      final outcome = '${r['outcome'] ?? ''}';
+      final dur = (r['duration_sec'] as num?)?.toInt() ?? 0;
+      if (status == 'completed') voiceCompleted++;
+      if (status == 'ringing' || status == 'in_progress' || status == 'completed' || status == 'failed') {
+        voiceDialed++;
+      }
+      if (meta['from_missed_inbound'] == true || meta['callback_queued'] == true) {
+        voiceCallbackQueued++;
+      }
+      final missed = inbound &&
+          (meta['missed'] == true ||
+              outcome == 'no_answer' ||
+              status == 'failed' ||
+              (dur <= 0 && status != 'completed' && (meta['callback_queued'] == true || meta['callback_skipped'] == true)));
+      if (missed) {
+        voiceMissed++;
+      } else if (dur > 0 || status == 'completed' || outcome == 'interested' || outcome == 'callback') {
+        voiceAnswered++;
+      }
+      if (dur > 0) {
+        voiceDurationSum += dur;
         voiceDurationN++;
       }
     }
@@ -3030,6 +3055,11 @@ ${e.answers}
       'voice_inbound': voiceInbound,
       'voice_avg_duration_sec':
           voiceDurationN == 0 ? 0 : (voiceDurationSum / voiceDurationN).round(),
+      'voice_answered': voiceAnswered,
+      'voice_missed': voiceMissed,
+      'voice_callback_queued': voiceCallbackQueued,
+      'voice_dialed': voiceDialed,
+      'voice_completed': voiceCompleted,
       if (platform != null) 'platform': platform,
     };
   }
@@ -3125,6 +3155,9 @@ ${e.answers}
     bool dueOnly = false,
     bool hideStub = false,
     bool includeDeleted = false,
+    String? query,
+    DateTime? from,
+    DateTime? to,
   }) async {
     final client = await SupabaseRepositoryBase.clientWithAuth();
     if (client == null) return [];
@@ -3147,7 +3180,66 @@ ${e.answers}
           )
           .toList();
     }
+    if (from != null || to != null) {
+      list = list.where((c) {
+        final points = <DateTime?>[c.createdAt, c.scheduledAt];
+        return points.any((p) {
+          if (p == null) return false;
+          if (from != null && p.isBefore(from)) return false;
+          if (to != null && p.isAfter(to)) return false;
+          return true;
+        });
+      }).toList();
+    }
+    final q = query?.trim().toLowerCase();
+    if (q != null && q.isNotEmpty) {
+      list = list.where((c) {
+        final phone = (c.phone ?? '').toLowerCase();
+        final sid = (c.providerCallId ?? '').toLowerCase();
+        final id = c.id.toLowerCase();
+        return phone.contains(q) || sid.contains(q) || id.contains(q) || id.startsWith(q);
+      }).toList();
+    }
     return list;
+  }
+
+  /// Bump scheduled_at on an open queued call (no re-queue / new row).
+  Future<void> rescheduleVoiceCall(String callId, DateTime when) async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) throw Exception('Not authenticated');
+    final row = await client.from('bos_voice_calls').select().eq('id', callId).maybeSingle();
+    if (row == null) throw Exception('Call not found');
+    final call = BosVoiceCall.fromMap(SupabaseRepositoryBase.rowToMap(row));
+    if (!call.isOpen) throw Exception('Call is not open — cannot reschedule');
+    final meta = Map<String, dynamic>.from(call.meta ?? {});
+    meta['scheduled_at'] = when.toIso8601String();
+    meta['rescheduled_at'] = DateTime.now().toIso8601String();
+    await client.from('bos_voice_calls').update({
+      'scheduled_at': when.toIso8601String(),
+      'status': call.status == 'ringing' ? 'queued' : call.status,
+      'meta': meta,
+      'updated_at': DateTime.now().toIso8601String(),
+    }).eq('id', callId);
+    if (call.leadId != null) {
+      await addActivity(
+        activityType: 'voice_rescheduled',
+        subject: 'Voice callback rescheduled',
+        body: when.toIso8601String(),
+        leadId: call.leadId,
+        dueAt: when,
+        meta: {'call_id': callId},
+      );
+      await client.from('bos_leads').update({
+        'next_follow_up_at': when.toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', call.leadId!);
+    }
+    await writeAuditLog(
+      action: 'voice.reschedule',
+      entityType: 'bos_voice_calls',
+      entityId: callId,
+      meta: {'scheduled_at': when.toIso8601String()},
+    );
   }
 
   Future<String> createVoiceCall(Map<String, dynamic> data) async {

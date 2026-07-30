@@ -56,6 +56,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   );
   final _telnyxPublicKeyCtrl = TextEditingController();
   bool _autoCallbackMissed = true;
+  bool _autoWaMissed = false;
+  final _missedWaMsgCtrl = TextEditingController(
+    text: "Hi, this is DG.YARD — we missed your call. We'll call you back shortly. Reply STOP to opt out.",
+  );
   Map<String, dynamic>? _voiceReady;
   bool _loadingReady = false;
   List<Map<String, dynamic>> _voiceEventDogfood = [];
@@ -131,6 +135,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     _inboundGreetingCtrl.dispose();
     _telnyxPublicKeyCtrl.dispose();
     _optOutPhoneCtrl.dispose();
+    _missedWaMsgCtrl.dispose();
     super.dispose();
   }
 
@@ -199,6 +204,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
             _inboundGreetingCtrl.text = '${vo['inbound_greeting']}';
           }
           _autoCallbackMissed = vo['auto_callback_missed'] != false;
+          _autoWaMissed = vo['auto_wa_missed'] == true;
+          if (vo['missed_wa_message'] != null && '${vo['missed_wa_message']}'.isNotEmpty) {
+            _missedWaMsgCtrl.text = '${vo['missed_wa_message']}';
+          }
         }
       }
       final settingsJson = settings?['settings'];
@@ -546,6 +555,8 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           'number': _voiceNumberCtrl.text.trim(),
           'inbound_greeting': _inboundGreetingCtrl.text.trim(),
           'auto_callback_missed': _autoCallbackMissed,
+          'auto_wa_missed': _autoWaMissed,
+          'missed_wa_message': _missedWaMsgCtrl.text.trim(),
         },
       },
       apiKeysPlaceholder: {
@@ -1339,6 +1350,26 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                       ? (v) => setState(() => _autoCallbackMissed = v)
                       : null,
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('WhatsApp after missed inbound'),
+                  subtitle: const Text('Send “we missed your call” (respects opt-outs / DND)'),
+                  value: _autoWaMissed,
+                  onChanged: (BosPermissions.canManageSettings || BosPermissions.canEdit)
+                      ? (v) => setState(() => _autoWaMissed = v)
+                      : null,
+                ),
+                if (_autoWaMissed) ...[
+                  TextField(
+                    controller: _missedWaMsgCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Missed-call WhatsApp message',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 const SizedBox(height: 12),
                 const Text(
                   'Voice / SMS opt-outs',

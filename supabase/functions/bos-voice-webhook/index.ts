@@ -30,6 +30,8 @@ async function loadVoiceSettings(
 ): Promise<{
   inboundGreeting: string;
   autoCallbackMissed: boolean;
+  autoWaMissed: boolean;
+  missedWaMessage: string;
   telnyxPublicKey: string;
 }> {
   const { data: row } = await db
@@ -53,11 +55,137 @@ async function loadVoiceSettings(
   ).trim();
   const autoRaw = voice.auto_callback_missed;
   const autoCallbackMissed = autoRaw === false || autoRaw === "false" ? false : true;
+  const waRaw = voice.auto_wa_missed;
+  const autoWaMissed = waRaw === true || waRaw === "true";
+  const missedWaMessage = String(
+    voice.missed_wa_message ||
+      "Hi, this is DG.YARD — we missed your call. We'll call you back shortly. Reply STOP to opt out.",
+  ).trim();
   return {
     inboundGreeting: greeting || DEFAULT_INBOUND_GREETING,
     autoCallbackMissed,
+    autoWaMissed,
+    missedWaMessage,
     telnyxPublicKey: String(telnyx.public_key || Deno.env.get("TELNYX_PUBLIC_KEY") || ""),
   };
+}
+
+async function isPhoneOptedOut(
+  db: ReturnType<typeof admin>,
+  tenantId: string,
+  phone: string,
+): Promise<boolean> {
+  const digits = normalizePhone(phone);
+  const tail = digits.slice(-10);
+  const { data: optsOut } = await db
+    .from("bos_opt_outs")
+    .select("id,phone,channel")
+    .eq("tenant_id", tenantId)
+    .limit(200);
+  return (optsOut ?? []).some((o) => {
+    const p = normalizePhone(String(o.phone || ""));
+    return p.endsWith(tail) || (tail.length >= 8 && p.includes(tail));
+  });
+}
+
+async function sendMissedCallWhatsApp(
+  db: ReturnType<typeof admin>,
+  opts: {
+    tenantId: string;
+    leadId: string | null;
+    phone: string;
+    callId: string;
+    message: string;
+  },
+): Promise<{ sent: boolean; sim: boolean }> {
+  if (await isPhoneOptedOut(db, opts.tenantId, opts.phone)) {
+    await logEvent(db, {
+      tenantId: opts.tenantId,
+      callId: opts.callId,
+      leadId: opts.leadId,
+      eventType: "missed_wa_skipped",
+      payload: { reason: "opt_out", phone: opts.phone },
+    });
+    return { sent: false, sim: false };
+  }
+  if (opts.leadId) {
+    const { data: lead } = await db
+      .from("bos_leads")
+      .select("meta")
+      .eq("id", opts.leadId)
+      .maybeSingle();
+    const meta = (lead?.meta ?? {}) as Record<string, unknown>;
+    if (meta.do_not_call === true || meta.dnd === true) {
+      await logEvent(db, {
+        tenantId: opts.tenantId,
+        callId: opts.callId,
+        leadId: opts.leadId,
+        eventType: "missed_wa_skipped",
+        payload: { reason: "dnd", phone: opts.phone },
+      });
+      return { sent: false, sim: false };
+    }
+  }
+  const comm = await resolveTenantComm(db, opts.tenantId);
+  const token = comm.whatsappToken;
+  const phoneId = comm.whatsappPhoneNumberId;
+  if (!token || !phoneId) {
+    await logEvent(db, {
+      tenantId: opts.tenantId,
+      callId: opts.callId,
+      leadId: opts.leadId,
+      eventType: "missed_wa_sim",
+      payload: { reason: "no_whatsapp_secrets", phone: opts.phone },
+    });
+    if (opts.leadId) {
+      await db.from("bos_activities").insert({
+        id: crypto.randomUUID(),
+        tenant_id: opts.tenantId,
+        lead_id: opts.leadId,
+        activity_type: "wa_missed_sim",
+        subject: "Missed-call WhatsApp (stub)",
+        body: opts.message,
+        completed_at: new Date().toISOString(),
+        meta: { call_id: opts.callId, sim: true },
+      });
+    }
+    return { sent: false, sim: true };
+  }
+  const to = normalizePhone(opts.phone).replace(/^0+/, "");
+  const res = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: to.startsWith("91") ? to : `91${to.slice(-10)}`,
+      type: "text",
+      text: { body: opts.message },
+    }),
+  });
+  const meta = await res.json().catch(() => ({}));
+  await logEvent(db, {
+    tenantId: opts.tenantId,
+    callId: opts.callId,
+    leadId: opts.leadId,
+    eventType: res.ok ? "missed_wa_sent" : "missed_wa_failed",
+    payload: { phone: opts.phone, meta },
+  });
+  if (opts.leadId) {
+    await db.from("bos_activities").insert({
+      id: crypto.randomUUID(),
+      tenant_id: opts.tenantId,
+      lead_id: opts.leadId,
+      activity_type: res.ok ? "wa_missed_sent" : "wa_missed_failed",
+      subject: res.ok ? "Missed-call WhatsApp sent" : "Missed-call WhatsApp failed",
+      body: opts.message,
+      completed_at: new Date().toISOString(),
+      meta: { call_id: opts.callId, provider_meta: meta },
+    });
+  }
+  return { sent: res.ok, sim: false };
 }
 
 async function queueMissedCallback(
@@ -549,6 +677,17 @@ Deno.serve(async (req) => {
           }
         } catch (_) { /* non-fatal */ }
       }
+      if (missed && voiceSettings.autoWaMissed && customerPhone) {
+        try {
+          await sendMissedCallWhatsApp(db, {
+            tenantId: tenantHint,
+            leadId,
+            phone: customerPhone,
+            callId,
+            message: voiceSettings.missedWaMessage,
+          });
+        } catch (_) { /* non-fatal */ }
+      }
     }
 
     // Telnyx inbound with call_control_id but no phone yet (rare) — still try match by sid
@@ -727,6 +866,34 @@ Deno.serve(async (req) => {
             });
           }
         }
+      } catch (_) { /* non-fatal */ }
+    }
+
+    // Optional WhatsApp after missed inbound (independent of callback queue)
+    if (
+      isInbound &&
+      voiceSettings.autoWaMissed &&
+      customerPhone &&
+      !prevMeta.missed_wa_sent &&
+      (mappedIsMissed(statusRaw) ||
+        (eventType === "call.hangup" && mapped === "failed"))
+    ) {
+      try {
+        const wa = await sendMissedCallWhatsApp(db, {
+          tenantId,
+          leadId: (call.lead_id as string) || null,
+          phone: customerPhone || String(call.phone || ""),
+          callId: call.id as string,
+          message: voiceSettings.missedWaMessage,
+        });
+        await db.from("bos_voice_calls").update({
+          meta: {
+            ...meta,
+            missed_wa_sent: wa.sent || wa.sim,
+            missed_wa_sim: wa.sim,
+          },
+          updated_at: new Date().toISOString(),
+        }).eq("id", call.id);
       } catch (_) { /* non-fatal */ }
     }
 

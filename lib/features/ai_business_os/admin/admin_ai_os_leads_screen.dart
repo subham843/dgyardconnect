@@ -984,12 +984,76 @@ class _LeadDetailDialogState extends State<_LeadDetailDialog> {
                   title: Text(a.subject ?? a.activityType),
                   subtitle: Text(
                     a.voiceCallId != null
-                        ? '${a.body ?? ''}${a.body != null && a.body!.isNotEmpty ? '\n' : ''}Open Voice call'
+                        ? '${a.body ?? ''}${a.body != null && a.body!.isNotEmpty ? '\n' : ''}Open Voice · Reschedule'
                         : (a.body ?? ''),
                   ),
-                  trailing: a.voiceCallId != null
-                      ? const Icon(Icons.open_in_new, size: 16)
-                      : null,
+                  trailing: a.voiceCallId == null
+                      ? null
+                      : PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert, size: 18),
+                          onSelected: (v) async {
+                            if (v == 'open') {
+                              Navigator.pop(context);
+                              context.go(
+                                '${RouteNames.adminAiOsVoice}?call=${a.voiceCallId}',
+                              );
+                              return;
+                            }
+                            if (v == 'reschedule') {
+                              final choice = await showDialog<String>(
+                                context: context,
+                                builder: (ctx) => SimpleDialog(
+                                  title: const Text('Reschedule callback'),
+                                  children: [
+                                    SimpleDialogOption(
+                                      onPressed: () => Navigator.pop(ctx, '+1h'),
+                                      child: const Text('+1 hour'),
+                                    ),
+                                    SimpleDialogOption(
+                                      onPressed: () => Navigator.pop(ctx, 'tomorrow'),
+                                      child: const Text('Tomorrow 10:00'),
+                                    ),
+                                    SimpleDialogOption(
+                                      onPressed: () => Navigator.pop(ctx),
+                                      child: const Text('Cancel'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (choice == null || !mounted) return;
+                              final now = DateTime.now();
+                              final when = choice == '+1h'
+                                  ? now.add(const Duration(hours: 1))
+                                  : () {
+                                      final t = now.add(const Duration(days: 1));
+                                      return DateTime(t.year, t.month, t.day, 10);
+                                    }();
+                              try {
+                                await widget.repo.rescheduleVoiceCall(a.voiceCallId!, when);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Rescheduled · ${when.toLocal().toString().substring(0, 16)}',
+                                      ),
+                                    ),
+                                  );
+                                }
+                                await _loadActivities();
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('$e')),
+                                  );
+                                }
+                              }
+                            }
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(value: 'open', child: Text('Open Voice call')),
+                            PopupMenuItem(value: 'reschedule', child: Text('Reschedule')),
+                          ],
+                        ),
                   onTap: a.voiceCallId == null
                       ? null
                       : () {

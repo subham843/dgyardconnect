@@ -28,6 +28,7 @@ class AdminAiOsVoiceScreen extends StatefulWidget {
 
 class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
   final _repo = BosRepository();
+  final _searchCtrl = TextEditingController();
   List<BosVoiceCall> _items = [];
   List<BosLead> _leads = [];
   List<Map<String, dynamic>> _events = [];
@@ -38,11 +39,40 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
   String _activeProvider = 'stub';
   bool _runningDue = false;
   bool _openedFocusCall = false;
+  /// all | today | 7d | custom
+  String _datePreset = 'all';
+  DateTimeRange? _customRange;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  (DateTime? from, DateTime? to) _dateBounds() {
+    final now = DateTime.now();
+    switch (_datePreset) {
+      case 'today':
+        final start = DateTime(now.year, now.month, now.day);
+        return (start, start.add(const Duration(days: 1)).subtract(const Duration(milliseconds: 1)));
+      case '7d':
+        return (now.subtract(const Duration(days: 7)), now);
+      case 'custom':
+        final r = _customRange;
+        if (r == null) return (null, null);
+        return (
+          DateTime(r.start.year, r.start.month, r.start.day),
+          DateTime(r.end.year, r.end.month, r.end.day, 23, 59, 59),
+        );
+      default:
+        return (null, null);
+    }
   }
 
   Future<void> _runDueCallbacks() async {
@@ -73,12 +103,42 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
     try {
       await _repo.reconcilePendingVoiceCompletions();
     } catch (_) {}
-    final items = await _repo.listVoiceCalls(
+    final bounds = _dateBounds();
+    var items = await _repo.listVoiceCalls(
       status: _statusFilter,
       dueOnly: _dueOnly,
       hideStub: _hideStub,
+      query: _searchCtrl.text,
+      from: bounds.$1,
+      to: bounds.$2,
     );
     final leads = await _repo.listLeads();
+    final q = _searchCtrl.text.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      final leadIds = leads
+          .where(
+            (l) =>
+                l.displayName.toLowerCase().contains(q) ||
+                (l.phone ?? '').toLowerCase().contains(q) ||
+                (l.companyName ?? '').toLowerCase().contains(q),
+          )
+          .map((l) => l.id)
+          .toSet();
+      if (leadIds.isNotEmpty) {
+        final byPhone = await _repo.listVoiceCalls(
+          status: _statusFilter,
+          dueOnly: _dueOnly,
+          hideStub: _hideStub,
+          from: bounds.$1,
+          to: bounds.$2,
+        );
+        final extra = byPhone.where((c) => c.leadId != null && leadIds.contains(c.leadId));
+        final seen = items.map((c) => c.id).toSet();
+        for (final c in extra) {
+          if (seen.add(c.id)) items = [...items, c];
+        }
+      }
+    }
     final events = await _repo.listVoiceEvents(limit: 80);
     String provider = 'stub';
     try {
@@ -144,6 +204,76 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Permission denied')),
     );
+  }
+
+  Future<void> _rescheduleCall(BosVoiceCall call) async {
+    if (!BosPermissions.canEdit && !BosPermissions.canCreate) return _denied();
+    if (!call.isOpen) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only open/queued calls can be rescheduled')),
+      );
+      return;
+    }
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Reschedule callback'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, '+1h'),
+            child: const Text('+1 hour'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'tomorrow'),
+            child: const Text('Tomorrow 10:00'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'pick'),
+            child: const Text('Pick date & time…'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !mounted) return;
+    DateTime when;
+    final now = DateTime.now();
+    if (choice == '+1h') {
+      when = now.add(const Duration(hours: 1));
+    } else if (choice == 'tomorrow') {
+      final t = now.add(const Duration(days: 1));
+      when = DateTime(t.year, t.month, t.day, 10);
+    } else {
+      final date = await showDatePicker(
+        context: context,
+        initialDate: now.add(const Duration(hours: 1)),
+        firstDate: now,
+        lastDate: now.add(const Duration(days: 90)),
+      );
+      if (date == null || !mounted) return;
+      final time = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(now.add(const Duration(hours: 1))),
+      );
+      if (time == null || !mounted) return;
+      when = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    }
+    try {
+      await _repo.rescheduleVoiceCall(call.id, when);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Rescheduled · ${when.toLocal().toString().substring(0, 16)}')),
+        );
+      }
+      _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
   }
 
   void _showCallDetail(BosVoiceCall c) {
@@ -216,6 +346,14 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
           ),
         ),
         actions: [
+          if (c.isOpen)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _rescheduleCall(c);
+              },
+              child: const Text('Reschedule'),
+            ),
           if (c.leadId != null)
             TextButton(
               onPressed: () {
@@ -614,6 +752,24 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
             ),
           ),
           Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: TextField(
+              controller: _searchCtrl,
+              decoration: InputDecoration(
+                hintText: 'Search phone, lead, provider call id…',
+                prefixIcon: const Icon(Icons.search),
+                border: const OutlineInputBorder(),
+                isDense: true,
+                suffixIcon: IconButton(
+                  tooltip: 'Search',
+                  icon: const Icon(Icons.arrow_forward),
+                  onPressed: _load,
+                ),
+              ),
+              onSubmitted: (_) => _load(),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.all(12),
             child: Wrap(
               spacing: 12,
@@ -636,6 +792,38 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                     _load();
                   },
                 ),
+                for (final p in const [
+                  ('all', 'All time'),
+                  ('today', 'Today'),
+                  ('7d', '7 days'),
+                  ('custom', 'Custom'),
+                ])
+                  ChoiceChip(
+                    label: Text(p.$2),
+                    selected: _datePreset == p.$1,
+                    onSelected: (_) async {
+                      if (p.$1 == 'custom') {
+                        final picked = await showDateRangePicker(
+                          context: context,
+                          firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                          lastDate: DateTime.now().add(const Duration(days: 30)),
+                          initialDateRange: _customRange ??
+                              DateTimeRange(
+                                start: DateTime.now().subtract(const Duration(days: 7)),
+                                end: DateTime.now(),
+                              ),
+                        );
+                        if (picked == null) return;
+                        setState(() {
+                          _datePreset = 'custom';
+                          _customRange = picked;
+                        });
+                      } else {
+                        setState(() => _datePreset = p.$1);
+                      }
+                      _load();
+                    },
+                  ),
                 DropdownButton<String?>(
                   value: _statusFilter,
                   hint: const Text('Status'),

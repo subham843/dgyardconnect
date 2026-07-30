@@ -14,6 +14,7 @@
 10. **Run due** — Hub or Voice → Run due; due callbacks/campaign queues dial; Reports voice KPIs tick up.
 
 Optional: Campaign with `trigger_voice` → Run campaign → Voice “due” filter → dial.
+Optional: Enable Settings “WhatsApp after missed inbound”; Calendar shows scheduled voice with deep-link.
 
 Secrets live in Settings (`api_secrets.voice.telnyx`); never commit keys. Deploy webhook after Edge changes:
 
