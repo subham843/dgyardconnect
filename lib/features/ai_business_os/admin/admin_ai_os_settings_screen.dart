@@ -147,8 +147,8 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     return '—';
   }
 
-  Future<void> _loadSettings() async {
-    setState(() => _loading = true);
+  Future<void> _loadSettings({bool quiet = false}) async {
+    if (!quiet && mounted) setState(() => _loading = true);
     final tenantId = await _repo.activeTenantId;
     final tenant = await _repo.getTenant(tenantId);
     final members = await _repo.listMembers(tenantId);
@@ -421,14 +421,23 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
       final r = await _repo.verifyVoiceProvider(provider: _voiceProvider);
       if (!mounted) return;
       final live = r['live'] == true || r['ok'] == true;
+      final testCreds = r['test_credentials'] == true;
+      final err = '${r['error'] ?? r['provider']}';
+      final hint = _voiceHints[_voiceProvider] ?? '';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             live
-                ? 'Verify OK · ${r['provider']} credentials look valid'
-                : 'Verify failed · ${r['error'] ?? r['provider']}',
+                ? 'Verify OK · ${r['provider']} live credentials valid'
+                : testCreds
+                    ? 'Keys saved${hint.isNotEmpty ? ' ($hint)' : ''} · '
+                        'Twilio TEST token detect — Console se LIVE Auth Token use karo (Test credentials mat lo)'
+                    : 'Verify failed · $err',
           ),
-          backgroundColor: live ? Colors.teal : Colors.orange.shade800,
+          backgroundColor: live
+              ? Colors.teal
+              : (testCreds ? Colors.deepOrange.shade700 : Colors.orange.shade800),
+          duration: const Duration(seconds: 8),
         ),
       );
     } catch (e) {
@@ -690,19 +699,16 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
       entityType: 'bos_tenants',
       entityId: t.id,
     );
+    await _loadSettings(quiet: true);
     if (mounted) {
-      final telnyxSaved = _voiceProvider == 'telnyx' && secrets.containsKey('voice');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            telnyxSaved
-                ? 'Settings saved — Telnyx keys cleared from form (masked hints refresh)'
-                : 'Settings saved',
-          ),
-        ),
-      );
+      final voiceHint = _voiceHints[_voiceProvider] ?? _voiceKeysHint;
+      final secretsNote = secrets.containsKey('voice')
+          ? (voiceHint.isNotEmpty
+              ? 'Voice secrets saved ($voiceHint). Fields empty = keep existing.'
+              : 'Voice secrets saved (reload if hint missing).')
+          : 'Settings saved';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(secretsNote)));
     }
-    _loadSettings();
   }
 
   void _denied() {
@@ -1189,26 +1195,51 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   ),
                 ],
                 if (_voiceProvider == 'twilio') ...[
+                  if ((_voiceHints['twilio'] ?? '').isNotEmpty)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.teal.shade200),
+                      ),
+                      child: Text(
+                        'Saved Twilio secrets (masked): ${_voiceHints['twilio']}\n'
+                        'Form fields empty rehte hain — paste only jab replace karna ho.',
+                        style: TextStyle(color: Colors.teal.shade900, fontSize: 12),
+                      ),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'Abhi koi Twilio SID/Token save nahi — neeche paste karke Save settings.',
+                        style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+                      ),
+                    ),
                   TextField(
                     controller: _voiceSidCtrl,
                     decoration: const InputDecoration(
                       labelText: 'Twilio Account SID (AC…)',
-                      hintText: 'Console → Account info → Account SID',
+                      hintText: 'LIVE Account SID — Test credentials mat lo',
                       border: OutlineInputBorder(),
                     ),
                   ),
                   TextField(
                     controller: _voiceKeyCtrl,
                     decoration: const InputDecoration(
-                      labelText: 'Twilio Auth Token',
-                      hintText: 'Same page → Auth Token → Reveal',
+                      labelText: 'Twilio LIVE Auth Token',
+                      hintText: 'Account → API keys → Auth Token (not Test)',
                       border: OutlineInputBorder(),
                     ),
                     obscureText: true,
                   ),
                   Text(
-                    'Verify 403 = SID/Token mismatch. Use Account SID (AC…), not API Key (SK…). '
-                    'Save settings, then Verify keys. Number E.164 (+91…).',
+                    'Important: Twilio Console me “Test credentials” wala token mat use karo — '
+                    'us se Verify 403 aata hai. LIVE Account SID + LIVE Auth Token chahiye. '
+                    'Number field alag save hota hai (api_config); SID/Token secrets me save hote hain.',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                   ),
                   const SizedBox(height: 8),

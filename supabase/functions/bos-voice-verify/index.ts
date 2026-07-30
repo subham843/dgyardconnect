@@ -97,7 +97,14 @@ Deno.serve(async (req) => {
           const twilioMsg = String(
             bodyJson.message || bodyJson.error_message || bodyJson.code || "",
           );
-          if (res.status === 401 || res.status === 403) {
+          const isTest =
+            /test account credentials/i.test(twilioMsg) ||
+            /test credentials/i.test(twilioMsg);
+          if (isTest) {
+            error =
+              "Twilio TEST Auth Token detect hua. Console → Account → API keys & tokens → " +
+              "LIVE Auth Token (Reveal) copy karo — neeche 'Test credentials' section mat use karo.";
+          } else if (res.status === 401 || res.status === 403) {
             error =
               `Twilio ${res.status} — Auth Token Account SID se match nahi karta. ` +
               `Console → Account → API keys & tokens → Auth Token (Reveal) copy karke dubara Save + Verify. ` +
@@ -105,6 +112,18 @@ Deno.serve(async (req) => {
           } else {
             error = `Twilio account lookup ${res.status}${twilioMsg ? ` · ${twilioMsg}` : ""}`;
           }
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              live: false,
+              provider,
+              checks,
+              error,
+              test_credentials: isTest,
+              detail: bodyJson,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
         }
       }
     } else if (provider === "plivo") {
