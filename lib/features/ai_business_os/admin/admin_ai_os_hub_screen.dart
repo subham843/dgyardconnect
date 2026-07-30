@@ -19,6 +19,7 @@ class _AdminAiOsHubScreenState extends State<AdminAiOsHubScreen> {
   final _repo = BosRepository();
   Map<String, dynamic>? _stats;
   Map<String, dynamic>? _platform;
+  Map<String, dynamic>? _voiceHealth;
   bool _loading = true;
   bool _onboardingDone = true;
   bool _isSuperadmin = false;
@@ -43,15 +44,27 @@ class _AdminAiOsHubScreenState extends State<AdminAiOsHubScreen> {
         platform = null;
       }
     }
+    Map<String, dynamic>? voiceHealth;
+    try {
+      voiceHealth = await _repo.voiceProviderHealth();
+    } catch (_) {}
     if (mounted) {
       setState(() {
         _stats = stats;
         _platform = platform;
+        _voiceHealth = voiceHealth;
         _onboardingDone = done;
         _isSuperadmin = superadmin;
         _loading = false;
       });
     }
+  }
+
+  String _formatAge(int seconds) {
+    if (seconds < 60) return '${seconds}s ago';
+    if (seconds < 3600) return '${seconds ~/ 60}m ago';
+    if (seconds < 86400) return '${seconds ~/ 3600}h ago';
+    return '${seconds ~/ 86400}d ago';
   }
 
   @override
@@ -187,6 +200,44 @@ class _AdminAiOsHubScreenState extends State<AdminAiOsHubScreen> {
                             onPressed: () => context.go(RouteNames.adminAiOsOnboarding),
                           ),
                       ],
+                    ),
+                    const SizedBox(height: 24),
+                    Text('Voice provider', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    Card(
+                      child: ListTile(
+                        leading: Icon(
+                          (_voiceHealth?['last_dial_live'] == true)
+                              ? Icons.phone_in_talk
+                              : Icons.phone_paused,
+                          color: (_voiceHealth?['provider'] == 'stub')
+                              ? Colors.orange
+                              : Colors.teal,
+                        ),
+                        title: Text(
+                          'Active: ${_voiceHealth?['provider'] ?? '—'}',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          [
+                            if (_voiceHealth?['last_dial_live'] == true)
+                              'Last dial: live'
+                            else if (_voiceHealth?['last_dial_live'] == false)
+                              'Last dial: stub'
+                            else
+                              'No dials yet',
+                            if (_voiceHealth?['last_webhook_age_sec'] is int)
+                              'Last webhook: ${_formatAge(_voiceHealth!['last_webhook_age_sec'] as int)}'
+                            else
+                              'No webhook events yet',
+                          ].join(' · '),
+                        ),
+                        trailing: TextButton(
+                          onPressed: () => context.go(RouteNames.adminAiOsVoice),
+                          child: const Text('Voice'),
+                        ),
+                        onTap: () => context.go(RouteNames.adminAiOsSettings),
+                      ),
                     ),
                     const SizedBox(height: 24),
                     Text('AI Sales Agent', style: Theme.of(context).textTheme.titleMedium),

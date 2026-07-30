@@ -42,13 +42,16 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
+    try {
+      await _repo.reconcilePendingVoiceCompletions();
+    } catch (_) {}
     final items = await _repo.listVoiceCalls(
       status: _statusFilter,
       dueOnly: _dueOnly,
       hideStub: _hideStub,
     );
     final leads = await _repo.listLeads();
-    final events = await _repo.listVoiceEvents(limit: 30);
+    final events = await _repo.listVoiceEvents(limit: 80);
     String provider = 'stub';
     try {
       provider = await _repo.resolveActiveVoiceProvider();
@@ -62,6 +65,16 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
         _loading = false;
       });
     }
+  }
+
+  String _eventStripFor(String callId) {
+    final related = _events
+        .where((e) => '${e['call_id']}' == callId)
+        .take(6)
+        .map((e) => '${e['event_type'] ?? '?'}')
+        .toList();
+    if (related.isEmpty) return '';
+    return related.reversed.join(' → ');
   }
 
   void _denied() {
@@ -513,15 +526,34 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                       : (c.dialSim ? Colors.orange : Colors.teal),
                                 ),
                                 title: Text(c.phone ?? 'Unknown'),
-                                subtitle: Text(
-                                  '${c.status}'
-                                  '${c.isInbound ? ' · inbound' : ''}'
-                                  ' · ${c.voiceProviderLabel}${c.dialSim ? ' (stub)' : ' (live)'}'
-                                  '${c.sttProvider != null ? ' · ${c.sttProvider}' : ''}'
-                                  '${c.durationSec != null ? ' · ${c.durationSec}s' : ''}'
-                                  '${c.outcome != null ? ' · ${c.outcome}' : ''}'
-                                  '${sched != null ? ' · due $sched' : ''}',
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${c.status}'
+                                      '${c.isInbound ? ' · inbound' : ''}'
+                                      ' · ${c.voiceProviderLabel}${c.dialSim ? ' (stub)' : ' (live)'}'
+                                      '${c.sttProvider != null ? ' · ${c.sttProvider}' : ''}'
+                                      '${c.durationSec != null ? ' · ${c.durationSec}s' : ''}'
+                                      '${c.outcome != null ? ' · ${c.outcome}' : ''}'
+                                      '${sched != null ? ' · due $sched' : ''}',
+                                    ),
+                                    if (_eventStripFor(c.id).isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          _eventStripFor(c.id),
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.teal.shade800,
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                  ],
                                 ),
+                                isThreeLine: _eventStripFor(c.id).isNotEmpty,
                                 trailing: Wrap(
                                   spacing: 6,
                                   children: [

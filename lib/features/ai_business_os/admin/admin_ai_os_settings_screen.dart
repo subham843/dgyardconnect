@@ -569,7 +569,16 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
       entityId: t.id,
     );
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Settings saved')));
+      final telnyxSaved = _voiceProvider == 'telnyx' && secrets.containsKey('voice');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            telnyxSaved
+                ? 'Settings saved — Telnyx keys cleared from form (masked hints refresh)'
+                : 'Settings saved',
+          ),
+        ),
+      );
     }
     _loadSettings();
   }
@@ -1008,12 +1017,22 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                       labelText: 'Telnyx Connection ID (Voice API / Call Control app)',
                     ),
                   ),
+                  if ((_voiceHints['telnyx'] ?? '').isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        'Saved Telnyx secrets: ${_voiceHints['telnyx']} '
+                        '(fields clear after save — paste only to replace)',
+                        style: TextStyle(color: Colors.teal.shade800, fontSize: 12),
+                      ),
+                    ),
                   Text(
                     '1) Mission Control → Auth → API Key\n'
                     '2) Voice → Call Control Applications → Connection ID\n'
                     '3) Assign a Telnyx number + Outbound Voice Profile\n'
                     '4) Paste webhook URL below (also sent on each dial)\n'
-                    'Dial uses record-from-answer; answered calls speak your script automatically.',
+                    'Dial uses record-from-answer; answered calls speak your script automatically.\n'
+                    'Inbound: call.initiated → answer + Hindi/English greeting + lead.',
                     style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
                   ),
                   Align(

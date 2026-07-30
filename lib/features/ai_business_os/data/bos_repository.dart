@@ -2564,6 +2564,85 @@ ${e.answers}
     }
   }
 
+  /// Complete calls stuck after Telnyx hangup when recording never arrived (~45s).
+  Future<int> reconcilePendingVoiceCompletions() async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) return 0;
+    final tid = await activeTenantId;
+    final rows = await client
+        .from('bos_voice_calls')
+        .select('id,status,meta,recording_url')
+        .eq('tenant_id', tid)
+        .isFilter('deleted_at', null)
+        .inFilter('status', ['queued', 'ringing', 'in_progress']);
+    final now = DateTime.now();
+    var n = 0;
+    for (final r in rows as List) {
+      final meta = r['meta'] is Map ? Map<String, dynamic>.from(r['meta'] as Map) : <String, dynamic>{};
+      final pending = meta['pending_complete_at']?.toString();
+      final hangup = meta['hangup_at']?.toString();
+      DateTime? due;
+      if (pending != null) due = DateTime.tryParse(pending);
+      if (due == null && hangup != null) {
+        final h = DateTime.tryParse(hangup);
+        if (h != null) due = h.add(const Duration(seconds: 45));
+      }
+      if (due == null || due.isAfter(now)) continue;
+      try {
+        await completeVoiceCall(
+          r['id'] as String,
+          outcome: 'interested',
+          audioUrl: (r['recording_url'] ?? meta['recording_url'] ?? meta['audio_url'])?.toString(),
+        );
+        n++;
+      } catch (_) {}
+    }
+    return n;
+  }
+
+  Future<Map<String, dynamic>> voiceProviderHealth() async {
+    final provider = await resolveActiveVoiceProvider();
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) {
+      return {'provider': provider, 'last_dial_live': null, 'last_webhook_age_sec': null};
+    }
+    final tid = await activeTenantId;
+    final calls = await client
+        .from('bos_voice_calls')
+        .select('meta,created_at,provider')
+        .eq('tenant_id', tid)
+        .isFilter('deleted_at', null)
+        .order('created_at', ascending: false)
+        .limit(1);
+    bool? lastLive;
+    if ((calls as List).isNotEmpty) {
+      final meta = calls.first['meta'] is Map
+          ? Map<String, dynamic>.from(calls.first['meta'] as Map)
+          : <String, dynamic>{};
+      lastLive = meta['dial_sim'] != true;
+    }
+    int? webhookAgeSec;
+    try {
+      final ev = await client
+          .from('bos_voice_events')
+          .select('created_at')
+          .eq('tenant_id', tid)
+          .order('created_at', ascending: false)
+          .limit(1);
+      if ((ev as List).isNotEmpty) {
+        final t = DateTime.tryParse('${ev.first['created_at']}');
+        if (t != null) {
+          webhookAgeSec = DateTime.now().difference(t).inSeconds;
+        }
+      }
+    } catch (_) {}
+    return {
+      'provider': provider,
+      'last_dial_live': lastLive,
+      'last_webhook_age_sec': webhookAgeSec,
+    };
+  }
+
   Future<void> softDeleteVoiceCall(String callId) async {
     final client = await SupabaseRepositoryBase.clientWithAuth();
     if (client == null) return;
