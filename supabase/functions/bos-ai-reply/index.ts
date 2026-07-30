@@ -88,9 +88,10 @@ async function draftReply(
   agentName: string,
   language: string,
   tone: string,
+  openaiKey = "",
 ): Promise<string> {
   const context = kbSnippets.slice(0, 5).join("\n---\n");
-  const openai = Deno.env.get("OPENAI_API_KEY") ?? "";
+  const openai = openaiKey || Deno.env.get("OPENAI_API_KEY") || "";
   const prompt =
     `You are ${agentName} (${channel}). Language preference: ${language}. Tone: ${tone}. ` +
     `Hindi/English/Hinglish OK. Be concise.\n` +
@@ -176,8 +177,8 @@ function cosine(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-async function embedQuery(text: string): Promise<number[]> {
-  const openai = Deno.env.get("OPENAI_API_KEY") ?? "";
+async function embedQuery(text: string, openaiKey = ""): Promise<number[]> {
+  const openai = openaiKey || Deno.env.get("OPENAI_API_KEY") || "";
   if (!openai) return [];
   try {
     const res = await fetch("https://api.openai.com/v1/embeddings", {
@@ -196,11 +197,19 @@ async function embedQuery(text: string): Promise<number[]> {
   }
 }
 
+type Citation = {
+  document_id: string | null;
+  title: string;
+  excerpt: string;
+  score: number;
+};
+
 async function retrieveKbSnippets(
   db: ReturnType<typeof admin>,
   tenantId: string,
   query: string,
-): Promise<string[]> {
+  openaiKey = "",
+): Promise<{ snippets: string[]; citations: Citation[] }> {
   const { data: chunks } = await db
     .from("bos_kb_chunks")
     .select("content, embedding, document_id")
@@ -208,7 +217,7 @@ async function retrieveKbSnippets(
     .limit(80);
 
   if (chunks && chunks.length > 0) {
-    const qVec = await embedQuery(query.slice(0, 1000));
+    const qVec = await embedQuery(query.slice(0, 1000), openaiKey);
     const scored = chunks.map((c) => {
       const emb = Array.isArray(c.embedding) ? (c.embedding as number[]) : [];
       let score = 0;
@@ -218,21 +227,54 @@ async function retrieveKbSnippets(
         const words = query.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
         score = words.reduce((s, w) => s + (t.includes(w) ? 1 : 0), 0) / Math.max(words.length, 1);
       }
-      return { content: c.content as string, score };
+      return {
+        content: c.content as string,
+        score,
+        document_id: (c.document_id as string) || null,
+      };
     });
     scored.sort((a, b) => b.score - a.score);
-    const top = scored.filter((s) => s.score > 0).slice(0, 5).map((s) => s.content.slice(0, 280));
-    if (top.length) return top;
+    const top = scored.filter((s) => s.score > 0).slice(0, 5);
+    if (top.length) {
+      const docIds = [...new Set(top.map((t) => t.document_id).filter(Boolean))] as string[];
+      const titleMap: Record<string, string> = {};
+      if (docIds.length) {
+        const { data: docs } = await db
+          .from("bos_kb_documents")
+          .select("id,title")
+          .in("id", docIds);
+        for (const d of docs ?? []) titleMap[d.id as string] = d.title as string;
+      }
+      const citations: Citation[] = top.map((t) => ({
+        document_id: t.document_id,
+        title: (t.document_id && titleMap[t.document_id]) || "Knowledge base",
+        excerpt: t.content.slice(0, 180),
+        score: Math.round(t.score * 1000) / 1000,
+      }));
+      return {
+        snippets: top.map((t) => t.content.slice(0, 280)),
+        citations,
+      };
+    }
   }
 
   const { data: docs } = await db
     .from("bos_kb_documents")
-    .select("title,body")
+    .select("id,title,body")
     .eq("tenant_id", tenantId)
     .eq("is_active", true)
     .is("deleted_at", null)
     .limit(8);
-  return (docs ?? []).map((d) => `${d.title}: ${(d.body ?? "").slice(0, 280)}`);
+  const citations: Citation[] = (docs ?? []).slice(0, 5).map((d) => ({
+    document_id: d.id as string,
+    title: (d.title as string) || "Document",
+    excerpt: String(d.body ?? "").slice(0, 180),
+    score: 0.1,
+  }));
+  return {
+    snippets: (docs ?? []).map((d) => `${d.title}: ${(d.body ?? "").slice(0, 280)}`),
+    citations,
+  };
 }
 
 function nextFollowUpIso(sequence: typeof SEQUENCE_DEFAULT, score: string): string | null {
@@ -309,7 +351,13 @@ Deno.serve(async (req) => {
       ? (aiSales.sequence as typeof SEQUENCE_DEFAULT)
       : SEQUENCE_DEFAULT;
 
-    const snippets = await retrieveKbSnippets(db, tenantId, lastInbound || "Hello");
+    const comm = await resolveTenantComm(db, tenantId);
+    const { snippets, citations } = await retrieveKbSnippets(
+      db,
+      tenantId,
+      lastInbound || "Hello",
+      comm.openaiApiKey,
+    );
     const intent = detectIntent(lastInbound || "Hello");
     const score = intentToScore(intent);
     const agentName = String(aiAgent.name || "DG.YARD Sales Agent");
@@ -322,10 +370,10 @@ Deno.serve(async (req) => {
       agentName,
       String(aiAgent.language || "hinglish"),
       String(aiAgent.tone || "friendly"),
+      comm.openaiApiKey,
     );
 
     let send: { sent: boolean; meta?: unknown } = { sent: false };
-    const comm = await resolveTenantComm(db, tenantId);
     if (channel === "whatsapp") {
       send = await sendWhatsApp(
         conv.phone ?? "",
@@ -337,7 +385,11 @@ Deno.serve(async (req) => {
 
     const msgStatus =
       channel === "whatsapp"
-        ? (send.sent ? "sent" : "queued")
+        ? (send.sent
+          ? "sent"
+          : (!comm.whatsappToken || !comm.whatsappPhoneNumberId)
+          ? "queued"
+          : "failed")
         : "sent_sim";
 
     await db.from("bos_messages").insert({
@@ -347,7 +399,13 @@ Deno.serve(async (req) => {
       direction: "outbound",
       body: reply,
       status: msgStatus,
-      meta: { ai: true, intent, channel, meta_send: send.meta ?? null },
+      meta: {
+        ai: true,
+        intent,
+        channel,
+        meta_send: send.meta ?? null,
+        citations,
+      },
     });
 
     await recordUsage(db, tenantId, "ai_messages", 1, { channel, intent });
@@ -356,7 +414,7 @@ Deno.serve(async (req) => {
     await db.from("bos_conversations").update({
       last_message_at: new Date().toISOString(),
       unread_count: 0,
-      meta: { ...(conv.meta ?? {}), last_intent: intent },
+      meta: { ...(conv.meta ?? {}), last_intent: intent, last_citations: citations },
     }).eq("id", conversationId);
 
     if (leadId && lastInbound) {
@@ -417,6 +475,7 @@ Deno.serve(async (req) => {
         lead_id: leadId,
         channel,
         status: msgStatus,
+        citations,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

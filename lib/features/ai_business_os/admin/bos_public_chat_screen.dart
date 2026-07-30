@@ -17,7 +17,7 @@ class _BosPublicChatScreenState extends State<BosPublicChatScreen> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _scroll = ScrollController();
-  final _messages = <({bool outbound, String text})>[];
+  final _messages = <({bool outbound, String text, List<Map<String, dynamic>> citations})>[];
   String? _visitorId;
   bool _busy = false;
   bool _started = false;
@@ -37,7 +37,7 @@ class _BosPublicChatScreenState extends State<BosPublicChatScreen> {
     setState(() {
       _busy = true;
       _started = true;
-      _messages.add((outbound: false, text: text));
+      _messages.add((outbound: false, text: text, citations: const []));
       _composer.clear();
     });
     try {
@@ -50,8 +50,14 @@ class _BosPublicChatScreenState extends State<BosPublicChatScreen> {
         phone: _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
       );
       final reply = '${r['reply'] ?? ''}';
+      final cites = (r['citations'] is List)
+          ? (r['citations'] as List)
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : <Map<String, dynamic>>[];
       if (reply.isNotEmpty) {
-        setState(() => _messages.add((outbound: true, text: reply)));
+        setState(() => _messages.add((outbound: true, text: reply, citations: cites)));
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients) {
@@ -157,7 +163,29 @@ class _BosPublicChatScreenState extends State<BosPublicChatScreen> {
                                                 : const Color(0xFFDCF8C6),
                                             borderRadius: BorderRadius.circular(10),
                                           ),
-                                          child: Text(m.text),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(m.text),
+                                              if (m.outbound && m.citations.isNotEmpty) ...[
+                                                const SizedBox(height: 6),
+                                                Text(
+                                                  'Sources',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.grey.shade700,
+                                                  ),
+                                                ),
+                                                ...m.citations.take(3).map(
+                                                  (c) => Text(
+                                                    '• ${c['title'] ?? 'KB'}: ${c['excerpt'] ?? ''}',
+                                                    style: TextStyle(fontSize: 11, color: Colors.grey.shade800),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
                                         ),
                                       );
                                     },

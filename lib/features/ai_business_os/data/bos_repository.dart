@@ -2385,6 +2385,7 @@ ${e.answers}
     String? outcome,
     DateTime? nextFollowUpAt,
     String? transcript,
+    String? audioUrl,
     int? durationSec,
   }) async {
     final token = SupabaseAuthService.instance.accessToken;
@@ -2399,6 +2400,7 @@ ${e.answers}
         if (outcome != null) 'outcome': outcome,
         if (nextFollowUpAt != null) 'next_follow_up_at': nextFollowUpAt.toIso8601String(),
         if (transcript != null) 'transcript': transcript,
+        if (audioUrl != null && audioUrl.isNotEmpty) 'audio_url': audioUrl,
         if (durationSec != null) 'duration_sec': durationSec,
       }),
     );
@@ -2455,17 +2457,19 @@ ${e.answers}
         'Are you available for a quick follow-up?';
 
     final when = scheduledAt ?? lead.nextFollowUpAt ?? DateTime.now();
+    final voiceProvider = await resolveActiveVoiceProvider();
     final id = await createVoiceCall({
       'phone': dial,
       'status': 'queued',
       'direction': 'outbound',
-      'provider': 'exotel',
+      'provider': voiceProvider,
       'script': script,
       'lead_id': leadId,
       'scheduled_at': when.toIso8601String(),
       'meta': {
         'source': 'follow_up',
         'scheduled_at': when.toIso8601String(),
+        'voice_provider': voiceProvider,
       },
     });
     await addActivity(
@@ -2490,7 +2494,46 @@ ${e.answers}
     return id;
   }
 
-  /// Place outbound call via Edge (`bos-voice-dial`) — Exotel when secrets set.
+  /// Active voice provider from tenant settings (api_config / ai_sales).
+  Future<String> resolveActiveVoiceProvider() async {
+    try {
+      final cfg = await getTenantApiConfig();
+      final apiCfg = cfg['api_config'];
+      if (apiCfg is Map && apiCfg['voice'] is Map) {
+        final p = '${(apiCfg['voice'] as Map)['provider'] ?? ''}'.trim();
+        if (p.isNotEmpty) return p;
+      }
+      final ai = cfg['ai_sales'];
+      if (ai is Map) {
+        final p = '${ai['voice_provider'] ?? ''}'.trim();
+        if (p.isNotEmpty) return p;
+      }
+    } catch (_) {}
+    return 'stub';
+  }
+
+  Future<Map<String, dynamic>> verifyVoiceProvider({String? provider}) async {
+    await SupabaseAuthService.instance.syncSessionFromFirebase();
+    final tid = await activeTenantId;
+    final token = SupabaseAuthService.instance.accessToken;
+    final res = await http.post(
+      Uri.parse(SupabaseConfig.functionUrl('bos-voice-verify')),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+        'apikey': SupabaseConfig.anonKey,
+      },
+      body: jsonEncode({
+        'tenant_id': tid,
+        if (provider != null) 'provider': provider,
+      }),
+    );
+    final body = jsonDecode(res.body);
+    if (res.statusCode >= 400) throw Exception(body['error'] ?? res.body);
+    return Map<String, dynamic>.from(body as Map);
+  }
+
+  /// Place outbound call via Edge (`bos-voice-dial`) — live when tenant secrets set.
   Future<Map<String, dynamic>> dialVoiceCall(String callId) async {
     await SupabaseAuthService.instance.syncSessionFromFirebase();
     final tid = await activeTenantId;
@@ -2602,8 +2645,9 @@ ${e.answers}
 
   Future<Map<String, dynamic>> fullAnalytics() async {
     final base = await overviewStats();
+    final sales = await aiSalesStats();
     final client = await SupabaseRepositoryBase.clientWithAuth();
-    if (client == null) return base;
+    if (client == null) return {...base, ...sales};
     final tid = await activeTenantId;
     final tickets = await client
         .from('bos_tickets')
@@ -2617,7 +2661,7 @@ ${e.answers}
         .isFilter('deleted_at', null);
     final campaigns = await client
         .from('bos_campaigns')
-        .select('status,sent_count')
+        .select('status,sent_count,failed_count')
         .eq('tenant_id', tid)
         .isFilter('deleted_at', null);
     final quotes = await client
@@ -2625,29 +2669,84 @@ ${e.answers}
         .select('status,total_paise')
         .eq('tenant_id', tid)
         .isFilter('deleted_at', null);
+    final usage = await client
+        .from('bos_usage_events')
+        .select('metric,quantity,occurred_at')
+        .eq('tenant_id', tid)
+        .gte('occurred_at', DateTime.now().subtract(const Duration(days: 30)).toIso8601String());
+    final recipients = await client
+        .from('bos_campaign_recipients')
+        .select('delivery_status')
+        .eq('tenant_id', tid);
     final ticketRows = tickets as List;
     final openTickets = ticketRows.where((t) => t['status'] == 'open' || t['status'] == 'in_progress').length;
     final projectRows = projects as List;
     final activeProjects = projectRows.where((p) => p['status'] == 'active').length;
     final campaignRows = campaigns as List;
     var campaignSent = 0;
+    var campaignFailed = 0;
     for (final c in campaignRows) {
       campaignSent += (c['sent_count'] as num?)?.toInt() ?? 0;
+      campaignFailed += (c['failed_count'] as num?)?.toInt() ?? 0;
     }
     final quoteRows = quotes as List;
     var quoteValue = 0;
     for (final q in quoteRows) {
       quoteValue += (q['total_paise'] as num?)?.toInt() ?? 0;
     }
+    final usageTotals = <String, num>{};
+    for (final u in usage as List) {
+      final m = '${u['metric']}';
+      usageTotals[m] = (usageTotals[m] ?? 0) + ((u['quantity'] as num?) ?? 1);
+    }
+    final deliveryBreakdown = <String, int>{};
+    for (final r in recipients as List) {
+      final s = '${r['delivery_status'] ?? 'unknown'}';
+      deliveryBreakdown[s] = (deliveryBreakdown[s] ?? 0) + 1;
+    }
+    Map<String, dynamic>? platform;
+    try {
+      if (SupabaseAuthService.instance.currentJwtIsSuperadmin) {
+        platform = await superAdminPlatformStats();
+      }
+    } catch (_) {}
     return {
       ...base,
+      ...sales,
       'tickets_open': openTickets,
       'tickets_total': ticketRows.length,
       'projects_active': activeProjects,
       'projects_total': projectRows.length,
       'campaign_sends': campaignSent,
+      'campaign_failed': campaignFailed,
       'quotation_value_paise': quoteValue,
+      'usage_30d': usageTotals,
+      'delivery_breakdown': deliveryBreakdown,
+      if (platform != null) 'platform': platform,
     };
+  }
+
+  Future<Map<String, int>> campaignDeliveryBreakdown(String campaignId) async {
+    final rows = await listCampaignRecipients(campaignId);
+    final out = <String, int>{};
+    for (final r in rows) {
+      final s = '${r['delivery_status'] ?? r['status'] ?? 'unknown'}';
+      out[s] = (out[s] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  Future<List<Map<String, dynamic>>> listOutboundEvents({String? campaignId, int limit = 50}) async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) return [];
+    final tid = await activeTenantId;
+    var q = client
+        .from('bos_outbound_events')
+        .select()
+        .eq('tenant_id', tid);
+    if (campaignId != null) q = q.eq('campaign_id', campaignId);
+    final res = await q.order('created_at', ascending: false).limit(limit);
+    return (res as List).map((r) => SupabaseRepositoryBase.rowToMap(r)).toList();
   }
 
   Future<void> applyMarketplaceInstall(String itemId) async {

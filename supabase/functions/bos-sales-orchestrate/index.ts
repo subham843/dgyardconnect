@@ -252,7 +252,9 @@ Deno.serve(async (req) => {
             `Hi ${firstName}, this is DG.YARD calling about your enquiry` +
             (reqHint ? ` regarding ${reqHint}` : "") +
             `. Do you have two minutes?`;
-          const provider = String(aiSales.voice_provider || "stub");
+          const { resolveTenantComm } = await import("../_shared/tenant_comm.ts");
+          const comm = await resolveTenantComm(db, tenantId);
+          const provider = comm.voiceProvider || String(aiSales.voice_provider || "stub");
           const callId = crypto.randomUUID();
           const when = new Date().toISOString();
           await db.from("bos_voice_calls").insert({
@@ -262,15 +264,12 @@ Deno.serve(async (req) => {
             phone,
             direction: "outbound",
             status: "queued",
-            provider: provider === "exotel" ? "exotel" : "stub",
+            provider: provider === "stub" ? "stub" : provider,
             script,
             scheduled_at: when,
             meta: {
               source: "orchestrate",
               voice_provider: provider,
-              note: provider === "stub"
-                ? "Simulated dial — set VOICE_PROVIDER=exotel + secrets for live"
-                : "Exotel/Twilio dial pending adapter",
             },
           });
           await db.from("bos_activities").insert({
@@ -282,7 +281,21 @@ Deno.serve(async (req) => {
             body: script,
             due_at: when,
           });
-          actions.push("voice_queued");
+          try {
+            const dialUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/bos-voice-dial`;
+            const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+            await fetch(dialUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${key}`,
+              },
+              body: JSON.stringify({ call_id: callId, tenant_id: tenantId }),
+            });
+            actions.push("voice_dialed");
+          } catch (_) {
+            actions.push("voice_queued");
+          }
         }
       }
     } else {

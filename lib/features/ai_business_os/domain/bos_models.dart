@@ -547,6 +547,7 @@ class BosMessage {
     required this.createdAt,
     this.body,
     this.status,
+    this.meta,
   });
 
   final String id;
@@ -556,6 +557,16 @@ class BosMessage {
   final String? body;
   final String? status;
   final DateTime createdAt;
+  final Map<String, dynamic>? meta;
+
+  List<Map<String, dynamic>> get citations {
+    final raw = meta?['citations'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
 
   factory BosMessage.fromMap(Map<String, dynamic> map) => BosMessage(
         id: map['id'] as String,
@@ -565,6 +576,7 @@ class BosMessage {
         body: map['body'] as String?,
         status: map['status'] as String?,
         createdAt: DateTime.parse(map['created_at'] as String),
+        meta: map['meta'] is Map ? Map<String, dynamic>.from(map['meta'] as Map) : null,
       );
 }
 
@@ -910,6 +922,7 @@ class BosVoiceCall {
     this.outcome,
     this.crmUpdated = false,
     this.scheduledAt,
+    this.provider,
     this.meta,
   });
 
@@ -925,12 +938,20 @@ class BosVoiceCall {
   final String? outcome;
   final bool crmUpdated;
   final DateTime? scheduledAt;
+  final String? provider;
   final Map<String, dynamic>? meta;
   final DateTime createdAt;
 
   bool get isOpen => status == 'queued' || status == 'ringing' || status == 'in_progress';
   String? get aiSummary => meta?['summary']?.toString();
   String? get nextAction => meta?['next_action']?.toString();
+  String get voiceProviderLabel =>
+      (meta?['voice_provider'] ?? provider ?? 'stub').toString();
+  bool get dialSim => meta?['dial_sim'] == true;
+  String? get sttProvider => meta?['stt_provider']?.toString();
+  String? get recordingUrl =>
+      (meta?['recording_url'] ?? meta?['audio_url'])?.toString();
+  String? get providerCallId => meta?['provider_call_id']?.toString();
 
   factory BosVoiceCall.fromMap(Map<String, dynamic> map) {
     final meta = map['meta'] is Map ? Map<String, dynamic>.from(map['meta'] as Map) : null;
@@ -952,6 +973,7 @@ class BosVoiceCall {
       outcome: map['outcome'] as String?,
       crmUpdated: map['crm_updated'] as bool? ?? false,
       scheduledAt: scheduled,
+      provider: map['provider'] as String?,
       meta: meta,
       createdAt: DateTime.parse(map['created_at'] as String),
     );

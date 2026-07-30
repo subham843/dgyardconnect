@@ -145,13 +145,15 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
             );
           }
         } else {
+          final voiceProvider = await _repo.resolveActiveVoiceProvider();
           final callId = await _repo.createVoiceCall({
             'phone': phone.text.trim(),
             'status': 'queued',
             'direction': 'outbound',
-            'provider': 'exotel',
+            'provider': voiceProvider,
             'script': script.text.trim(),
             'scheduled_at': DateTime.now().toIso8601String(),
+            'meta': {'voice_provider': voiceProvider},
           });
           final dial = await _repo.dialVoiceCall(callId);
           if (mounted) {
@@ -160,8 +162,8 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
               SnackBar(
                 content: Text(
                   sim
-                      ? 'Queued (stub dial — set Exotel secrets for live)'
-                      : 'Dialing via ${dial['provider'] ?? 'exotel'}…',
+                      ? 'Queued (stub — set $voiceProvider secrets in Settings)'
+                      : 'Dialing via ${dial['provider'] ?? voiceProvider}…',
                 ),
               ),
             );
@@ -186,8 +188,8 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
           SnackBar(
             content: Text(
               sim
-                  ? 'Stub dial — set voice provider + Exotel secrets in Settings'
-                  : 'Live dial started (${dial['provider'] ?? 'exotel'})',
+                  ? 'Stub dial — set ${call.voiceProviderLabel} secrets in Settings'
+                  : 'Live dial started (${dial['provider'] ?? call.voiceProviderLabel})',
             ),
           ),
         );
@@ -204,23 +206,38 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
     if (!BosPermissions.canEdit) return _denied();
     var outcome = 'interested';
     DateTime? followUp = DateTime.now().add(const Duration(days: 1));
+    final audioCtrl = TextEditingController(text: call.recordingUrl ?? '');
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (c, setS) => AlertDialog(
-          title: const Text('Complete call (simulate)'),
+          title: const Text('Complete call'),
           content: SizedBox(
-            width: 400,
+            width: 420,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Text(
+                  '${call.voiceProviderLabel}${call.dialSim ? ' · stub' : ' · live'}'
+                  '${call.sttProvider != null ? ' · STT ${call.sttProvider}' : ''}',
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                ),
                 if (call.script != null && call.script!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
                   const Text('Script', style: TextStyle(fontWeight: FontWeight.bold)),
                   Text(call.script!, style: const TextStyle(fontSize: 13)),
                   const SizedBox(height: 12),
                 ],
+                TextField(
+                  controller: audioCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Recording / audio URL (Sarvam STT)',
+                    hintText: 'https://…',
+                  ),
+                ),
+                const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   initialValue: outcome,
                   decoration: const InputDecoration(labelText: 'Outcome'),
@@ -262,11 +279,13 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
       final result = await _repo.completeVoiceCall(
         call.id,
         outcome: outcome,
+        audioUrl: audioCtrl.text.trim().isEmpty ? null : audioCtrl.text.trim(),
         nextFollowUpAt: (outcome == 'callback' || outcome == 'no_answer') ? followUp : null,
       );
       if (mounted) {
+        final stt = result['stt_sim'] == true ? 'STT sim' : 'STT live';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Completed · ${result['outcome']}')),
+          SnackBar(content: Text('Completed · ${result['outcome']} · $stt')),
         );
       }
       _load();
@@ -341,22 +360,26 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                   ? c.scheduledAt!.toLocal().toString().substring(0, 16)
                                   : null;
                               return ListTile(
-                                leading: const Icon(Icons.phone_in_talk),
+                                leading: Icon(
+                                  c.dialSim ? Icons.phone_paused : Icons.phone_in_talk,
+                                  color: c.dialSim ? Colors.orange : Colors.teal,
+                                ),
                                 title: Text(c.phone ?? 'Unknown'),
                                 subtitle: Text(
                                   '${c.status}'
+                                  ' · ${c.voiceProviderLabel}${c.dialSim ? ' (stub)' : ' (live)'}'
+                                  '${c.sttProvider != null ? ' · ${c.sttProvider}' : ''}'
                                   '${c.outcome != null ? ' · ${c.outcome}' : ''}'
-                                  '${sched != null ? ' · due $sched' : ''}'
-                                  '${c.script != null ? ' · has script' : ''}',
+                                  '${sched != null ? ' · due $sched' : ''}',
                                 ),
                                 trailing: c.isOpen
                                     ? Wrap(
                                         spacing: 6,
                                         children: [
-                                          if (c.status == 'queued')
+                                          if (c.status == 'queued' || c.status == 'ringing')
                                             OutlinedButton(
                                               onPressed: () => _dial(c),
-                                              child: const Text('Dial'),
+                                              child: Text(c.status == 'queued' ? 'Dial' : 'Re-dial'),
                                             ),
                                           FilledButton.tonal(
                                             onPressed: () => _complete(c),
@@ -374,6 +397,14 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
                                           Text('Status: ${c.status}'),
+                                          Text(
+                                            'Provider: ${c.voiceProviderLabel}'
+                                            '${c.dialSim ? ' · stub dial' : ' · live'}',
+                                          ),
+                                          if (c.sttProvider != null) Text('STT: ${c.sttProvider}'),
+                                          if (c.providerCallId != null)
+                                            Text('Provider call ID: ${c.providerCallId}'),
+                                          if (c.recordingUrl != null) Text('Recording: ${c.recordingUrl}'),
                                           if (c.outcome != null) Text('Outcome: ${c.outcome}'),
                                           if (sched != null) Text('Scheduled: $sched'),
                                           if (c.script != null) ...[
@@ -392,14 +423,18 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                             Text(c.aiSummary!),
                                           ],
                                           if (c.nextAction != null) Text('Next action: ${c.nextAction}'),
-                                          Text(
-                                            'Provider: ${c.meta?['voice_provider'] ?? c.meta?['provider_note'] ?? 'stub'}',
-                                            style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
-                                          ),
                                         ],
                                       ),
                                     ),
                                     actions: [
+                                      if (c.isOpen)
+                                        TextButton(
+                                          onPressed: () {
+                                            Navigator.pop(ctx);
+                                            _dial(c);
+                                          },
+                                          child: const Text('Re-dial'),
+                                        ),
                                       TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
                                     ],
                                   ),

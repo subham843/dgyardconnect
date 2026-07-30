@@ -1,0 +1,160 @@
+// Verify voice provider secrets without placing a real call.
+// Body: { tenant_id?, provider? }
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { resolveTenantComm } from "../_shared/tenant_comm.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const DEFAULT_TENANT = "b0000000-0000-4000-8000-000000000001";
+
+function admin() {
+  const url = Deno.env.get("SUPABASE_URL") ?? "";
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!url || !key) throw new Error("Supabase not configured");
+  return createClient(url, key);
+}
+
+function basicAuth(user: string, pass: string) {
+  return `Basic ${btoa(`${user}:${pass}`)}`;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  try {
+    const body = await req.json().catch(() => ({}));
+    const tenantId = (body.tenant_id as string) || DEFAULT_TENANT;
+    const db = admin();
+    const comm = await resolveTenantComm(db, tenantId);
+    const provider = ((body.provider as string) || comm.voiceProvider || "stub").toLowerCase();
+
+    const checks: Record<string, unknown> = {
+      provider,
+      number_set: Boolean(comm.voiceNumber),
+    };
+
+    if (provider === "stub") {
+      return new Response(
+        JSON.stringify({ ok: true, provider: "stub", live: false, note: "Stub — no live verify" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    let live = false;
+    let detail: unknown = null;
+    let error: string | null = null;
+
+    if (provider === "exotel") {
+      checks.api_key = Boolean(comm.voiceApiKey);
+      checks.api_token = Boolean(comm.voiceApiToken);
+      checks.account_sid = Boolean(comm.voiceAccountSid);
+      if (comm.voiceApiKey && comm.voiceApiToken && comm.voiceAccountSid) {
+        const subdomain = comm.voiceExtra.subdomain || "api";
+        const host = subdomain.includes(".") ? subdomain : `${subdomain}.exotel.com`;
+        const url =
+          `https://${host}/v1/Accounts/${encodeURIComponent(comm.voiceAccountSid)}.json`;
+        const res = await fetch(url, {
+          headers: { Authorization: basicAuth(comm.voiceApiKey, comm.voiceApiToken) },
+        });
+        detail = await res.json().catch(() => ({}));
+        live = res.ok;
+        if (!res.ok) error = `Exotel account lookup ${res.status}`;
+      } else {
+        error = "Missing Exotel api_key / api_token / account_sid";
+      }
+    } else if (provider === "twilio") {
+      const sid = comm.voiceAccountSid || comm.twilioSid;
+      const token = comm.voiceApiToken || comm.voiceApiKey;
+      checks.account_sid = Boolean(sid);
+      checks.auth_token = Boolean(token);
+      if (sid && token) {
+        const res = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}.json`,
+          { headers: { Authorization: basicAuth(sid, token) } },
+        );
+        detail = await res.json().catch(() => ({}));
+        live = res.ok;
+        if (!res.ok) error = `Twilio account lookup ${res.status}`;
+      } else {
+        error = "Missing Twilio Account SID / Auth Token";
+      }
+    } else if (provider === "plivo") {
+      checks.auth_id = Boolean(comm.voiceAccountSid);
+      checks.auth_token = Boolean(comm.voiceApiToken || comm.voiceApiKey);
+      if (comm.voiceAccountSid && (comm.voiceApiToken || comm.voiceApiKey)) {
+        const res = await fetch(
+          `https://api.plivo.com/v1/Account/${encodeURIComponent(comm.voiceAccountSid)}/`,
+          {
+            headers: {
+              Authorization: basicAuth(
+                comm.voiceAccountSid,
+                comm.voiceApiToken || comm.voiceApiKey,
+              ),
+            },
+          },
+        );
+        detail = await res.json().catch(() => ({}));
+        live = res.ok;
+        if (!res.ok) error = `Plivo account lookup ${res.status}`;
+      } else {
+        error = "Missing Plivo Auth ID / Token";
+      }
+    } else if (provider === "vonage") {
+      checks.application_id = Boolean(comm.voiceAccountSid);
+      checks.private_key = Boolean(comm.voiceExtra.private_key);
+      checks.from_number = Boolean(comm.voiceNumber);
+      if (comm.voiceAccountSid && comm.voiceExtra.private_key) {
+        try {
+          const { createVonageJwt } = await import("../_shared/vonage_jwt.ts");
+          const jwt = await createVonageJwt(comm.voiceAccountSid, comm.voiceExtra.private_key, 60);
+          live = jwt.split(".").length === 3;
+          detail = { jwt_created: true, length: jwt.length };
+        } catch (e) {
+          error = `Vonage JWT sign failed: ${e}`;
+        }
+      } else {
+        error = "Missing Vonage application_id / private_key";
+      }
+    } else if (provider === "knowlarity") {
+      checks.api_key = Boolean(comm.voiceApiKey || comm.voiceExtra.x_api_key);
+      checks.k_number = Boolean(comm.voiceAccountSid || comm.voiceNumber);
+      live = Boolean(
+        (comm.voiceApiKey || comm.voiceExtra.x_api_key) &&
+          (comm.voiceAccountSid || comm.voiceNumber),
+      );
+      detail = { note: "Credentials present — Click2Call verified on Test dial" };
+      if (!live) error = "Missing Knowlarity x-api-key or k_number";
+    } else if (provider === "myoperator") {
+      checks.api_key = Boolean(comm.voiceApiKey);
+      checks.from = Boolean(comm.voiceNumber);
+      live = Boolean(comm.voiceApiKey && comm.voiceNumber);
+      detail = { note: "Credentials present — verified on Test dial" };
+      if (!live) error = "Missing MyOperator token or from number";
+    } else {
+      error = `Unknown provider ${provider}`;
+    }
+
+    return new Response(
+      JSON.stringify({
+        ok: live,
+        live,
+        provider,
+        checks,
+        error,
+        detail: live ? detail : undefined,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  } catch (e) {
+    return new Response(JSON.stringify({ error: String(e) }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+});
