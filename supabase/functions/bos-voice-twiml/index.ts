@@ -207,6 +207,7 @@ Deno.serve(async (req) => {
           openaiKey: String(openaiKey || ""),
           agentName,
           conversation: history as Array<{ role?: string; text?: string }>,
+          fast: true, // never wait on OpenAI during live call
         });
       }
       history.push({ role: "agent", text: speakText, at: new Date().toISOString() });
@@ -279,19 +280,41 @@ Deno.serve(async (req) => {
     }
 
     // --- First connect: use pre-generated opening_play (instant) ---
+    // Return TwiML ASAP when dial already baked Sarvam audio — no extra TTS wait.
+    const cachedOpening =
+      typeof prevMeta.opening_play === "string" && prevMeta.opening_play
+        ? String(prevMeta.opening_play)
+        : null;
     const openingText = String(
       prevMeta.opening_text ||
         call.script ||
         voiceCfg.inbound_greeting ||
         `Namaste, main ${agentName}, DG.YARD se baat kar raha hoon. Aapki enquiry ke baare mein do minute milenge?`,
-    ).slice(0, 500);
+    ).slice(0, 280);
 
-    let openingUrl =
-      typeof prevMeta.opening_play === "string" && prevMeta.opening_play
-        ? String(prevMeta.opening_play)
-        : null;
+    if (cachedOpening) {
+      // Non-blocking meta update so Twilio gets TwiML immediately
+      void db.from("bos_voice_calls").update({
+        status: "in_progress",
+        meta: {
+          ...prevMeta,
+          voice_turn: 1,
+          opening_played: true,
+          conversational: true,
+        },
+        updated_at: new Date().toISOString(),
+      }).eq("id", callId);
+      return twimlResponse(
+        gatherWithPrompt(
+          gatherLang,
+          baseAction,
+          speakOrPlay(cachedOpening, openingText, gatherLang),
+        ),
+      );
+    }
 
-    if (!openingUrl && sarvamKey) {
+    let openingUrl: string | null = null;
+    if (sarvamKey) {
       const audio = await sarvamTtsToPublicUrl(db, {
         tenantId,
         callId,
@@ -326,20 +349,6 @@ Deno.serve(async (req) => {
       },
       updated_at: new Date().toISOString(),
     }).eq("id", callId);
-
-    try {
-      await db.from("bos_voice_events").insert({
-        id: crypto.randomUUID(),
-        tenant_id: tenantId,
-        call_id: callId,
-        lead_id: call.lead_id || null,
-        provider: "twilio",
-        event_type: openingUrl ? "sarvam_play_opening_cached" : "opening_say_fallback",
-        payload: { opening_ready: Boolean(openingUrl), language },
-      });
-    } catch {
-      /* non-fatal */
-    }
 
     return twimlResponse(
       gatherWithPrompt(

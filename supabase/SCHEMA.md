@@ -221,6 +221,7 @@ Identity: Firebase UID + JWT claims `bos_tenant_id`, `bos_role`. Default tenant:
 | `bos_tickets` / `bos_ticket_comments` | Service & tickets |
 | `bos_voice_calls` | AI Voice (`script`, `outcome`, `scheduled_at`, `deleted_at`; dial/webhook/STT) |
 | `bos_voice_events` | Webhook/status event log (provider callbacks, inbound/missed) |
+| `bos_voice_clips` | Ephemeral Sarvam TTS bytes for fast Twilio `<Play>` (`bos-voice-clip`) |
 | `bos_marketing_campaigns` | Digital Marketing AI |
 | `bos_marketplace_items` / `bos_marketplace_installs` | SaaS template marketplace |
 

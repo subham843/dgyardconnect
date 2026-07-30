@@ -117,19 +117,21 @@ export async function sarvamTtsToPublicUrl(
   },
 ): Promise<{ url: string | null; sim: boolean; error?: string }> {
   try {
-    const text = opts.text.trim().slice(0, 1200);
+    // Keep phone replies short — less TTS time + smaller file.
+    const text = opts.text.trim().slice(0, 280);
     if (!text) return { url: null, sim: true, error: "empty_text" };
     if (!opts.apiKey) return { url: null, sim: true, error: "sarvam_key_missing" };
 
+    // Telephony-optimized: 16kHz mp3, no preprocessing (faster Sarvam turnaround).
     const payload: Record<string, unknown> = {
       text,
       target_language_code: opts.language || "hi-IN",
       speaker: opts.speaker,
       model: opts.model,
-      pace: 1.0,
-      speech_sample_rate: opts.model === "bulbul:v2" ? 22050 : 24000,
-      enable_preprocessing: true,
-      output_audio_codec: "wav",
+      pace: 1.1,
+      speech_sample_rate: 16000,
+      enable_preprocessing: false,
+      output_audio_codec: "mp3",
     };
     if (opts.model === "bulbul:v2") {
       payload.pitch = 0;
@@ -153,7 +155,7 @@ export async function sarvamTtsToPublicUrl(
         JSON.stringify(data);
       return { url: null, sim: false, error: `sarvam_http_${res.status}: ${msg}` };
     }
-    const b64 =
+    let b64 =
       (Array.isArray((data as { audios?: string[] }).audios) &&
         (data as { audios: string[] }).audios[0]) ||
       (data as { audio?: string }).audio ||
@@ -162,15 +164,39 @@ export async function sarvamTtsToPublicUrl(
     if (!b64 || typeof b64 !== "string") {
       return { url: null, sim: false, error: "no_audio_in_sarvam_response" };
     }
+    const comma = b64.indexOf(",");
+    if (b64.startsWith("data:") && comma >= 0) b64 = b64.slice(comma + 1);
 
+    // Fast path: DB clip + edge serve (skip Storage upload latency).
+    const clipId = crypto.randomUUID();
+    const { error: clipErr } = await db.from("bos_voice_clips").insert({
+      id: clipId,
+      tenant_id: opts.tenantId,
+      call_id: opts.callId,
+      content_type: "audio/mpeg",
+      audio_b64: b64,
+    });
+    if (!clipErr) {
+      const base = Deno.env.get("SUPABASE_URL") || "";
+      return {
+        url: `${base}/functions/v1/bos-voice-clip?id=${encodeURIComponent(clipId)}`,
+        sim: false,
+      };
+    }
+
+    // Fallback: Storage public URL
     const binary = decodeBase64Audio(b64);
-    const path = `${opts.tenantId}/${opts.callId}/t${opts.turn}-${Date.now()}.wav`;
+    const path = `${opts.tenantId}/${opts.callId}/t${opts.turn}-${Date.now()}.mp3`;
     const up = await db.storage.from("bos-voice-audio").upload(path, binary, {
-      contentType: "audio/wav",
+      contentType: "audio/mpeg",
       upsert: true,
     });
     if (up.error) {
-      return { url: null, sim: false, error: `storage_upload: ${up.error.message}` };
+      return {
+        url: null,
+        sim: false,
+        error: `clip_and_storage_failed: ${clipErr?.message || ""} ${up.error.message}`,
+      };
     }
     const pub = db.storage.from("bos-voice-audio").getPublicUrl(path);
     return { url: pub.data.publicUrl, sim: false };
@@ -219,55 +245,55 @@ function heuristicSalesReply(customer: string, hi: boolean, agent: string): stri
 
   if (asksDiff || (/(hd|ip)/i.test(t) && /(difference|farq|dono|kya|what)/i.test(t))) {
     return hi
-      ? `Bahut accha sawaal. HD analog camera DVR se judte hain, sasta setup, thodi limited clarity. IP camera NVR pe chalte hain, zyada clear picture, remote app se dekh sakte hain. Aapke site pe kitne cameras chahiye — main sahi option suggest karun?`
-      : `Great question. HD analog cameras use a DVR — lower cost, decent clarity. IP cameras use an NVR — sharper video and easy phone viewing. How many cameras do you need so I can recommend the right option?`;
+      ? `HD DVR pe sasta, IP NVR pe zyada clear aur phone pe live. Kitne cameras chahiye?`
+      : `HD is cheaper on DVR; IP is clearer with phone live view. How many cameras?`;
   }
 
   if (asksIp) {
     return hi
-      ? `IP cameras clear picture aur mobile pe live view dete hain. Aapko roughly kitne cameras chahiye, indoor ya outdoor?`
-      : `IP cameras give clearer video and live phone view. Roughly how many cameras, indoor or outdoor?`;
+      ? `IP clear picture aur mobile view deta hai. Kitne cameras, indoor ya outdoor?`
+      : `IP gives clear video and phone view. How many cameras, indoor or outdoor?`;
   }
 
   if (asksHd) {
     return hi
-      ? `HD cameras budget-friendly hote hain DVR ke saath. Kitne cameras aur area kitna bada hai?`
-      : `HD cameras are budget-friendly with a DVR. How many cameras and how large is the area?`;
+      ? `HD budget-friendly hai. Kitne cameras aur area kitna bada?`
+      : `HD is budget-friendly. How many cameras and how large is the area?`;
   }
 
   if (hasCctv && asksCount) {
     return hi
-      ? `Samajh gaya. Cameras ke hisaab se wiring aur NVR size decide hota hai. Aap HD chahenge ya IP, aur outdoor bhi lagenge?`
-      : `Got it. Camera count decides wiring and recorder size. Do you prefer HD or IP, and any outdoor cams?`;
+      ? `Samajh gaya. HD chahiye ya IP? Outdoor bhi lagenge?`
+      : `Got it. HD or IP? Any outdoor cameras too?`;
   }
 
   if (hasCctv || /(lagwana|install|lagana|chahiye|need|want)/i.test(t)) {
     return hi
-      ? `Bilkul, DG.YARD CCTV lagata hai. Pehle bataiye — aapko roughly kitne cameras chahiye? Phir main poochunga HD chahiye ya IP.`
-      : `Absolutely — DG.YARD installs CCTV. First, roughly how many cameras do you need? Then I'll ask HD or IP.`;
+      ? `Bilkul. Roughly kitne CCTV cameras chahiye?`
+      : `Absolutely. Roughly how many CCTV cameras do you need?`;
   }
 
   if (asksPrice) {
     return hi
-      ? `Price cameras, HD ya IP, aur site pe depend karti hai. Kitne cameras chahiye aur city kaun si hai? Main rough estimate bataunga.`
-      : `Pricing depends on camera count, HD vs IP, and site. How many cameras and which city? I'll share a ballpark.`;
+      ? `Price cameras aur HD ya IP pe depend karti hai. Kitne cameras chahiye?`
+      : `Price depends on count and HD vs IP. How many cameras?`;
   }
 
   if (/(haan|yes|interested|batao|ok|theek|ji|suniye)/i.test(t)) {
     return hi
-      ? `Bahut accha. Aapki zarurat kya hai — CCTV, networking, ya software? Main step by step help karunga.`
-      : `Great. Is your need CCTV, networking, or software? I'll help step by step.`;
+      ? `Accha. CCTV chahiye, networking, ya software?`
+      : `Great. CCTV, networking, or software?`;
   }
 
   if (/(network|wifi|lan|router|cabling)/i.test(t)) {
     return hi
-      ? `Networking ke liye site size aur users matter karte hain. Office hai ya home, aur kitne points chahiye?`
-      : `For networking, site size and users matter. Office or home, and how many points?`;
+      ? `Networking ke liye — office hai ya home, kitne points?`
+      : `For networking — office or home, and how many points?`;
   }
 
   return hi
-    ? `Main sun raha hoon. Thoda clear batayiye — CCTV camera, networking, ya koi aur DG.YARD service? Main aapke sawaal ka seedha jawab dunga.`
-    : `I'm listening. Please tell me clearly — CCTV cameras, networking, or another DG.YARD service? I'll answer your question directly.`;
+    ? `Boliye — CCTV, networking, ya aur kuch? Main seedha jawab dunga.`
+    : `Tell me — CCTV, networking, or something else? I'll answer directly.`;
 }
 
 export async function generateVoiceReply(opts: {
@@ -277,65 +303,63 @@ export async function generateVoiceReply(opts: {
   openaiKey?: string;
   agentName?: string;
   conversation?: Array<{ role?: string; text?: string }>;
+  /** Phone path: skip OpenAI wait (saves ~2–5s). Default true. */
+  fast?: boolean;
 }): Promise<string> {
   const customer = opts.customerText.trim().slice(0, 500);
   const lang = opts.language || "hi-IN";
   const agent = opts.agentName || "DG.YARD";
   const hi = lang.startsWith("hi");
+  const fast = opts.fast !== false;
+  const local = heuristicSalesReply(customer, hi, agent);
+
+  // Live calls: never block on LLM — heuristics answer in <1ms.
+  if (fast || !opts.openaiKey) return local;
+
   const history = (opts.conversation || [])
     .slice(-8)
     .map((m) => `${m.role === "customer" ? "Customer" : "Agent"}: ${String(m.text || "").slice(0, 200)}`)
     .join("\n");
 
-  // Prefer fast local sales dialogue first so the call is not silent for 20–30s waiting on LLM.
-  const local = heuristicSalesReply(customer, hi, agent);
-
-  if (opts.openaiKey) {
-    try {
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 4500);
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        signal: ac.signal,
-        headers: {
-          Authorization: `Bearer ${opts.openaiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          temperature: 0.4,
-          max_tokens: 120,
-          messages: [
-            {
-              role: "system",
-              content:
-                `You are ${agent}, friendly phone sales for DG.YARD (CCTV, networking, software). ` +
-                `Reply ONLY spoken dialogue: 2 short sentences max. No markdown, no lists. ` +
-                `ALWAYS answer the customer's actual question first, then ask ONE next question. ` +
-                `If they ask HD vs IP: explain simply then ask camera count. ` +
-                `If they want CCTV: ask how many cameras, then HD or IP. ` +
-                `Match customer language exactly (Hindi/Hinglish vs English). Never restart the intro.`,
-            },
-            {
-              role: "user",
-              content:
-                `Script hint: ${opts.scriptHint || "(none)"}\n` +
-                `Recent turns:\n${history || "(none)"}\n` +
-                `Customer just said (${lang}): ${customer}\n` +
-                `Draft idea (improve or keep): ${local}`,
-            },
-          ],
-        }),
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const data = await res.json();
-        const text = String(data.choices?.[0]?.message?.content || "").trim();
-        if (text) return text.slice(0, 320);
-      }
-    } catch {
-      /* use local */
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 2500);
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: ac.signal,
+      headers: {
+        Authorization: `Bearer ${opts.openaiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0.4,
+        max_tokens: 80,
+        messages: [
+          {
+            role: "system",
+            content:
+              `You are ${agent}, friendly phone sales for DG.YARD (CCTV, networking, software). ` +
+              `Reply ONLY spoken dialogue: 1-2 short sentences. No markdown. ` +
+              `Answer the question first, then ask ONE next question. Match customer language.`,
+          },
+          {
+            role: "user",
+            content:
+              `Script: ${opts.scriptHint || "(none)"}\nHistory:\n${history || "(none)"}\n` +
+              `Customer (${lang}): ${customer}\nDraft: ${local}`,
+          },
+        ],
+      }),
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      const text = String(data.choices?.[0]?.message?.content || "").trim();
+      if (text) return text.slice(0, 280);
     }
+  } catch {
+    /* use local */
   }
 
   return local;

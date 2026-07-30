@@ -86,3 +86,6 @@ verify_jwt = false
 
 [functions.bos-voice-twiml]
 verify_jwt = false
+
+[functions.bos-voice-clip]
+verify_jwt = false
