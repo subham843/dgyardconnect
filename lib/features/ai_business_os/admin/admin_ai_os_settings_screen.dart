@@ -97,6 +97,11 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   final _voicePrivateKeyCtrl = TextEditingController();
   final _voiceTestPhoneCtrl = TextEditingController();
   final _sarvamKeyCtrl = TextEditingController();
+  final _sarvamOrgCtrl = TextEditingController();
+  final _sarvamWorkspaceCtrl = TextEditingController();
+  final _sarvamAppIdCtrl = TextEditingController();
+  final _sarvamAppVersionCtrl = TextEditingController(text: '1');
+  final _sarvamConnectionCtrl = TextEditingController();
   final _smsSidCtrl = TextEditingController();
   final _workStartCtrl = TextEditingController(text: '9');
   final _workEndCtrl = TextEditingController(text: '20');
@@ -133,6 +138,11 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     _voicePrivateKeyCtrl.dispose();
     _voiceTestPhoneCtrl.dispose();
     _sarvamKeyCtrl.dispose();
+    _sarvamOrgCtrl.dispose();
+    _sarvamWorkspaceCtrl.dispose();
+    _sarvamAppIdCtrl.dispose();
+    _sarvamAppVersionCtrl.dispose();
+    _sarvamConnectionCtrl.dispose();
     _smsSidCtrl.dispose();
     _workStartCtrl.dispose();
     _workEndCtrl.dispose();
@@ -223,6 +233,11 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           if (!_speakersForModel(_sarvamModel).contains(_sarvamSpeaker)) {
             _sarvamSpeaker = _sarvamModel == 'bulbul:v2' ? 'anushka' : 'shubh';
           }
+          _sarvamOrgCtrl.text = '${vo['sarvam_org_id'] ?? ''}';
+          _sarvamWorkspaceCtrl.text = '${vo['sarvam_workspace_id'] ?? ''}';
+          _sarvamAppIdCtrl.text = '${vo['sarvam_app_id'] ?? ''}';
+          _sarvamAppVersionCtrl.text = '${vo['sarvam_app_version'] ?? '1'}';
+          _sarvamConnectionCtrl.text = '${vo['sarvam_connection_id'] ?? ''}';
         }
       }
       final settingsJson = settings?['settings'];
@@ -776,6 +791,13 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           'sarvam_model': _sarvamModel,
           'sarvam_speaker': _sarvamSpeaker,
           'sarvam_language': _aiLanguage == 'en' ? 'en-IN' : 'hi-IN',
+          'sarvam_org_id': _sarvamOrgCtrl.text.trim(),
+          'sarvam_workspace_id': _sarvamWorkspaceCtrl.text.trim(),
+          'sarvam_app_id': _sarvamAppIdCtrl.text.trim(),
+          'sarvam_app_version': _sarvamAppVersionCtrl.text.trim().isEmpty
+              ? '1'
+              : _sarvamAppVersionCtrl.text.trim(),
+          'sarvam_connection_id': _sarvamConnectionCtrl.text.trim(),
         },
       },
       apiKeysPlaceholder: {
@@ -859,6 +881,30 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           }
           if (_telnyxPublicKeyCtrl.text.trim().isNotEmpty) {
             nested['public_key'] = _telnyxPublicKeyCtrl.text.trim();
+          }
+          break;
+        case 'sarvam_agent':
+        case 'sarvam':
+          if (_voiceKeyCtrl.text.trim().isNotEmpty) {
+            nested['api_key'] = _voiceKeyCtrl.text.trim();
+          }
+          if (_sarvamOrgCtrl.text.trim().isNotEmpty) {
+            nested['org_id'] = _sarvamOrgCtrl.text.trim();
+          }
+          if (_sarvamWorkspaceCtrl.text.trim().isNotEmpty) {
+            nested['workspace_id'] = _sarvamWorkspaceCtrl.text.trim();
+          }
+          if (_sarvamAppIdCtrl.text.trim().isNotEmpty) {
+            nested['app_id'] = _sarvamAppIdCtrl.text.trim();
+          }
+          if (_sarvamAppVersionCtrl.text.trim().isNotEmpty) {
+            nested['app_version'] = _sarvamAppVersionCtrl.text.trim();
+          }
+          if (_sarvamConnectionCtrl.text.trim().isNotEmpty) {
+            nested['connection_id'] = _sarvamConnectionCtrl.text.trim();
+          }
+          if (_voiceNumberCtrl.text.trim().isNotEmpty) {
+            nested['agent_phone_number'] = _voiceNumberCtrl.text.trim();
           }
           break;
         default: // exotel
@@ -1347,8 +1393,12 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   ),
                   items: const [
                     DropdownMenuItem(value: 'stub', child: Text('Stub (simulate)')),
+                    DropdownMenuItem(
+                      value: 'sarvam_agent',
+                      child: Text('Sarvam Voice Agent (fast / recommended)'),
+                    ),
                     DropdownMenuItem(value: 'exotel', child: Text('Exotel')),
-                    DropdownMenuItem(value: 'twilio', child: Text('Twilio')),
+                    DropdownMenuItem(value: 'twilio', child: Text('Twilio (+ Sarvam TTS)')),
                     DropdownMenuItem(value: 'telnyx', child: Text('Telnyx')),
                     DropdownMenuItem(value: 'plivo', child: Text('Plivo')),
                     DropdownMenuItem(value: 'vonage', child: Text('Vonage (Nexmo)')),
@@ -1370,13 +1420,66 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 TextField(
                   controller: _voiceNumberCtrl,
                   decoration: InputDecoration(
-                    labelText: _voiceProvider == 'twilio' ||
-                            _voiceProvider == 'plivo' ||
-                            _voiceProvider == 'telnyx'
-                        ? 'Caller ID / From number (E.164)'
-                        : 'Voice caller number (ExoPhone / DID / agent)',
+                    labelText: _voiceProvider == 'sarvam_agent'
+                        ? 'Sarvam agent phone (E.164 From)'
+                        : _voiceProvider == 'twilio' ||
+                                _voiceProvider == 'plivo' ||
+                                _voiceProvider == 'telnyx'
+                            ? 'Caller ID / From number (E.164)'
+                            : 'Voice caller number (ExoPhone / DID / agent)',
                   ),
                 ),
+                if (_voiceProvider == 'sarvam_agent') ...[
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.indigo.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.indigo.shade200),
+                    ),
+                    child: Text(
+                      'Sarvam Voice Agents = real-time call (STT+AI+TTS ~1s).\n'
+                      '1) platform.sarvam.ai pe agent banao + telephony connect (Twilio/Exotel/Vobiz)\n'
+                      '2) Settings → API Key se Conversations key copy\n'
+                      '3) Org / Workspace / App ID / Connection ID paste → Save → Dial',
+                      style: TextStyle(color: Colors.indigo.shade900, fontSize: 12),
+                    ),
+                  ),
+                  TextField(
+                    controller: _voiceKeyCtrl,
+                    decoration: InputDecoration(
+                      labelText: (_voiceHints['sarvam_agent'] ?? '').isNotEmpty
+                          ? 'Sarvam Voice API key (saved — paste to replace)'
+                          : 'Sarvam Voice Agents API key (X-API-Key)',
+                    ),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _sarvamOrgCtrl,
+                    decoration: const InputDecoration(labelText: 'Org ID'),
+                  ),
+                  TextField(
+                    controller: _sarvamWorkspaceCtrl,
+                    decoration: const InputDecoration(labelText: 'Workspace ID'),
+                  ),
+                  TextField(
+                    controller: _sarvamAppIdCtrl,
+                    decoration: const InputDecoration(labelText: 'App / Agent ID'),
+                  ),
+                  TextField(
+                    controller: _sarvamAppVersionCtrl,
+                    decoration: const InputDecoration(labelText: 'App version (usually 1)'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  TextField(
+                    controller: _sarvamConnectionCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Telephony connection ID',
+                    ),
+                  ),
+                ],
                 if (_voiceProvider == 'exotel' || _voiceProvider == 'stub') ...[
                   TextField(
                     controller: _voiceSidCtrl,

@@ -222,6 +222,11 @@ Identity: Firebase UID + JWT claims `bos_tenant_id`, `bos_role`. Default tenant:
 | `bos_voice_calls` | AI Voice (`script`, `outcome`, `scheduled_at`, `deleted_at`; dial/webhook/STT) |
 | `bos_voice_events` | Webhook/status event log (provider callbacks, inbound/missed) |
 | `bos_voice_clips` | Ephemeral Sarvam TTS bytes for fast Twilio `<Play>` (`bos-voice-clip`) |
+
+**Voice engines:** `api_config.voice.provider` = `sarvam_agent` uses Sarvam Instant Outbound
+(`POST …/outbounds`, webhook `bos-voice-sarvam-webhook`) for sub-second STT+LLM+TTS.
+`twilio` keeps Gather + Sarvam TTS clips. Secrets: `api_secrets.voice.sarvam_agent.api_key` (X-API-Key)
++ org/workspace/app/connection IDs in `api_config.voice.sarvam_*`.
 | `bos_marketing_campaigns` | Digital Marketing AI |
 | `bos_marketplace_items` / `bos_marketplace_installs` | SaaS template marketplace |
 

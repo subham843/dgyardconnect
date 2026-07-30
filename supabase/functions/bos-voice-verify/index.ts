@@ -178,6 +178,30 @@ Deno.serve(async (req) => {
       live = Boolean(comm.voiceApiKey && comm.voiceNumber);
       detail = { note: "Credentials present — verified on Test dial" };
       if (!live) error = "Missing MyOperator token or from number";
+    } else if (provider === "sarvam_agent" || provider === "sarvam") {
+      const orgId = comm.voiceExtra.org_id || comm.voiceAccountSid;
+      const workspaceId = comm.voiceExtra.workspace_id;
+      const appId = comm.voiceExtra.app_id;
+      const connectionId = comm.voiceExtra.connection_id;
+      const agentPhone = comm.voiceExtra.agent_phone_number || comm.voiceNumber;
+      checks.api_key = Boolean(comm.voiceApiKey);
+      checks.org_id = Boolean(orgId);
+      checks.workspace_id = Boolean(workspaceId);
+      checks.app_id = Boolean(appId);
+      checks.connection_id = Boolean(connectionId);
+      checks.agent_phone = Boolean(agentPhone);
+      live = Boolean(
+        comm.voiceApiKey && orgId && workspaceId && appId && connectionId && agentPhone,
+      );
+      detail = {
+        note:
+          "Sarvam Voice Agent Instant Outbound — create agent + telephony in platform.sarvam.ai, then paste IDs here",
+        docs: "https://docs.sarvam.ai/conversations/api/instant-outbound/create",
+      };
+      if (!live) {
+        error =
+          "Missing Sarvam Voice Agent fields (API key, org, workspace, app_id, connection_id, agent phone)";
+      }
     } else if (provider === "telnyx") {
       const apiKey = comm.voiceApiKey || comm.voiceApiToken;
       const connectionId = comm.voiceExtra.connection_id || comm.voiceAccountSid;

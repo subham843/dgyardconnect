@@ -447,6 +447,147 @@ async function dialMyOperator(comm: TenantCommConfig, phone: string): Promise<Di
   };
 }
 
+async function dialSarvamAgent(
+  comm: TenantCommConfig,
+  phone: string,
+  script: string,
+  tenantId: string,
+  callId: string,
+): Promise<DialResult> {
+  const apiKey = comm.voiceApiKey;
+  const orgId = comm.voiceExtra.org_id || comm.voiceAccountSid;
+  const workspaceId = comm.voiceExtra.workspace_id || "";
+  const appId = comm.voiceExtra.app_id || "";
+  const appVersion = Number(comm.voiceExtra.app_version || "1") || 1;
+  const connectionId = comm.voiceExtra.connection_id || "";
+  const agentPhone = toE164(
+    comm.voiceExtra.agent_phone_number || comm.voiceNumber || "",
+  );
+  const to = toE164(phone);
+
+  if (missing(apiKey, orgId, workspaceId, appId, connectionId, agentPhone)) {
+    return {
+      ok: false,
+      sim: true,
+      status: "failed",
+      meta: {
+        reason: "missing_sarvam_agent_creds",
+        need: [
+          "X-API-Key (Settings → Voice Agents API key)",
+          "org_id",
+          "workspace_id",
+          "app_id",
+          "connection_id",
+          "agent_phone_number",
+        ],
+      },
+      error:
+        "Sarvam Voice Agent incomplete — set API key, org, workspace, app_id, connection_id, agent phone in Settings",
+    };
+  }
+  if (!to.startsWith("+") || !agentPhone.startsWith("+")) {
+    return {
+      ok: false,
+      sim: false,
+      status: "failed",
+      meta: { to, agentPhone },
+      error: "Phone numbers must be E.164 (+91…)",
+    };
+  }
+
+  const langRaw = (comm.voiceExtra.initial_language || "hi-IN").toLowerCase();
+  const initialLanguage =
+    langRaw.startsWith("en")
+      ? "English"
+      : langRaw.startsWith("ta")
+      ? "Tamil"
+      : langRaw.startsWith("te")
+      ? "Telugu"
+      : langRaw.startsWith("gu")
+      ? "Gujarati"
+      : langRaw.startsWith("mr")
+      ? "Marathi"
+      : "Hindi";
+
+  const base = Deno.env.get("SUPABASE_URL") || "";
+  const webhookUrl =
+    `${base}/functions/v1/bos-voice-sarvam-webhook` +
+    `?tenant_id=${encodeURIComponent(tenantId)}&call_id=${encodeURIComponent(callId)}`;
+
+  const endpoint =
+    `https://apps.sarvam.ai/api/outbounds/v1/orgs/${encodeURIComponent(orgId)}` +
+    `/workspaces/${encodeURIComponent(workspaceId)}/outbounds`;
+
+  const payload = {
+    app_config: {
+      app_id: appId,
+      app_version: appVersion,
+      app_type: "agent",
+      connection_config: {
+        connection_id: connectionId,
+        agent_phone_number: agentPhone,
+      },
+      agent_variables: {
+        call_id: callId,
+        tenant_id: tenantId,
+        script_hint: script.slice(0, 400),
+      },
+      app_overrides: {
+        initial_bot_message: script.slice(0, 400) || null,
+        initial_language_name: initialLanguage,
+      },
+    },
+    user_config: {
+      user_phone_number: to,
+    },
+    webhook_config: {
+      url: webhookUrl,
+      metadata: { call_id: callId, tenant_id: tenantId },
+    },
+  };
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": apiKey,
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      (data as { detail?: unknown; message?: string; error?: string })?.message ||
+      (data as { error?: string })?.error ||
+      JSON.stringify(data);
+    return {
+      ok: false,
+      sim: false,
+      status: "failed",
+      meta: { sarvam: data, http_status: res.status, endpoint },
+      error: `Sarvam Instant Outbound failed (${res.status}): ${msg}`,
+    };
+  }
+  const attemptId = String((data as { attempt_id?: string })?.attempt_id || "");
+  return {
+    ok: true,
+    sim: false,
+    status: "ringing",
+    meta: {
+      sarvam: data,
+      http_status: res.status,
+      to,
+      from: agentPhone,
+      sarvam_attempt_id: attemptId,
+      voice_engine: "sarvam_voice_agent",
+      conversational: true,
+      webhook_url: webhookUrl,
+      note: "Sarvam Voice Agent handles live STT+LLM+TTS (sub-second turns)",
+    },
+    providerCallId: attemptId || undefined,
+  };
+}
+
 async function dialTelnyx(
   comm: TenantCommConfig,
   phone: string,
@@ -561,6 +702,7 @@ Deno.serve(async (req) => {
     }
 
     // Pre-generate Sarvam opening while phone is still ringing → instant Play on answer.
+    // Skip for Sarvam Voice Agent (platform handles speech end-to-end).
     let openingMeta: Record<string, unknown> = {};
     if (provider === "twilio" || provider === "telnyx") {
       const { data: settingsRow } = await db
@@ -631,7 +773,9 @@ Deno.serve(async (req) => {
       result = await dialVonage(comm, phone, script);
     } else if (provider === "knowlarity") result = await dialKnowlarity(comm, phone);
     else if (provider === "myoperator") result = await dialMyOperator(comm, phone);
-    else if (provider === "telnyx") result = await dialTelnyx(comm, phone, script, tenantId, callId);
+    else if (provider === "sarvam_agent" || provider === "sarvam") {
+      result = await dialSarvamAgent(comm, phone, script, tenantId, callId);
+    } else if (provider === "telnyx") result = await dialTelnyx(comm, phone, script, tenantId, callId);
     else {
       result = {
         ok: false,

@@ -89,3 +89,6 @@ verify_jwt = false
 
 [functions.bos-voice-clip]
 verify_jwt = false
+
+[functions.bos-voice-sarvam-webhook]
+verify_jwt = false

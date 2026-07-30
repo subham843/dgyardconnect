@@ -195,6 +195,55 @@ export function resolveVoiceCreds(
     };
   }
 
+  // Sarvam Voice Agents (Instant Outbound) — real-time STT+LLM+TTS on Sarvam stack.
+  if (provider === "sarvam_agent" || provider === "sarvam") {
+    return {
+      voiceProvider: "sarvam_agent",
+      voiceApiKey:
+        pick.api_key ||
+        pick.x_api_key ||
+        envKey("SARVAM_VOICE_API_KEY") ||
+        envKey("SARVAM_CONVERSATIONS_API_KEY"),
+      voiceApiToken: pick.api_key || pick.x_api_key || "",
+      voiceAccountSid: pick.org_id || cfg.voice?.sarvam_org_id || envKey("SARVAM_ORG_ID") || "",
+      voiceNumber:
+        cfg.voice?.number ||
+        pick.agent_phone_number ||
+        pick.number ||
+        envKey("SARVAM_AGENT_PHONE") ||
+        "",
+      voiceExtra: {
+        org_id: pick.org_id || cfg.voice?.sarvam_org_id || envKey("SARVAM_ORG_ID") || "",
+        workspace_id:
+          pick.workspace_id ||
+          cfg.voice?.sarvam_workspace_id ||
+          envKey("SARVAM_WORKSPACE_ID") ||
+          "",
+        app_id: pick.app_id || cfg.voice?.sarvam_app_id || envKey("SARVAM_APP_ID") || "",
+        app_version:
+          pick.app_version ||
+          cfg.voice?.sarvam_app_version ||
+          envKey("SARVAM_APP_VERSION") ||
+          "1",
+        connection_id:
+          pick.connection_id ||
+          cfg.voice?.sarvam_connection_id ||
+          envKey("SARVAM_CONNECTION_ID") ||
+          "",
+        agent_phone_number:
+          cfg.voice?.number ||
+          pick.agent_phone_number ||
+          pick.number ||
+          envKey("SARVAM_AGENT_PHONE") ||
+          "",
+        initial_language:
+          cfg.voice?.sarvam_language ||
+          cfg.voice?.tts_language ||
+          "hi-IN",
+      },
+    };
+  }
+
   // stub / unknown — still surface any flat legacy keys for debugging
   return {
     voiceProvider: provider || "stub",
