@@ -42,6 +42,45 @@ function missing(...parts: string[]) {
   return parts.some((p) => !p);
 }
 
+/** Twilio / most CPaaS need E.164. Indian 10-digit → +91… */
+function toE164(raw: string, defaultCountry = "91"): string {
+  let p = String(raw || "").trim();
+  if (!p) return p;
+  // keep leading +
+  const hasPlus = p.startsWith("+");
+  const digits = p.replace(/\D/g, "");
+  if (!digits) return p;
+  if (hasPlus || digits.length > 10) {
+    return `+${digits}`;
+  }
+  if (digits.length === 10) {
+    return `+${defaultCountry}${digits}`;
+  }
+  if (digits.length === 11 && digits.startsWith("0")) {
+    return `+${defaultCountry}${digits.slice(1)}`;
+  }
+  if (digits.length === 12 && digits.startsWith(defaultCountry)) {
+    return `+${digits}`;
+  }
+  return hasPlus ? `+${digits}` : `+${digits}`;
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function twilioErrorMessage(payload: unknown, status: number): string {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const msg = String(p.message || p.error_message || p.detail || "").trim();
+  if (msg) return `Twilio dial failed (${status}): ${msg}`;
+  return `Twilio dial failed (${status})`;
+}
+
 async function dialExotel(comm: TenantCommConfig, phone: string): Promise<DialResult> {
   if (missing(comm.voiceApiKey, comm.voiceApiToken, comm.voiceAccountSid)) {
     return {
@@ -99,9 +138,10 @@ async function dialTwilio(
   phone: string,
   script: string,
 ): Promise<DialResult> {
-  const accountSid = comm.voiceAccountSid || comm.twilioSid;
-  const token = comm.voiceApiToken || comm.voiceApiKey;
-  const from = comm.voiceNumber || comm.twilioFrom;
+  const accountSid = String(comm.voiceAccountSid || comm.twilioSid || "").trim();
+  const token = String(comm.voiceApiToken || comm.voiceApiKey || "").trim();
+  const from = toE164(String(comm.voiceNumber || comm.twilioFrom || "").trim());
+  const to = toE164(phone);
   if (missing(accountSid, token, from)) {
     return {
       ok: false,
@@ -110,14 +150,32 @@ async function dialTwilio(
       meta: { reason: "twilio_missing_sid_token_or_from" },
     };
   }
+  if (!to.startsWith("+") || to.length < 11) {
+    return {
+      ok: false,
+      sim: false,
+      status: "failed",
+      meta: { reason: "invalid_to_e164", phone, to },
+      error: `Invalid To number "${phone}" — use E.164 like +917004582230`,
+    };
+  }
+  if (!from.startsWith("+")) {
+    return {
+      ok: false,
+      sim: false,
+      status: "failed",
+      meta: { reason: "invalid_from_e164", from },
+      error: `Invalid From number "${comm.voiceNumber}" — Twilio Caller ID must be E.164 (+91…)`,
+    };
+  }
   const url =
     `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Calls.json`;
   const form = new URLSearchParams();
-  form.set("To", phone);
+  form.set("To", to);
   form.set("From", from);
   form.set(
     "Twiml",
-    `<Response><Say>${script.slice(0, 500).replace(/[<>&]/g, "")}</Say></Response>`,
+    `<Response><Say>${escapeXml(script.slice(0, 500))}</Say></Response>`,
   );
   const res = await fetch(url, {
     method: "POST",
@@ -133,15 +191,15 @@ async function dialTwilio(
       ok: false,
       sim: false,
       status: "failed",
-      meta: { twilio: payload, http_status: res.status },
-      error: `Twilio dial failed (${res.status})`,
+      meta: { twilio: payload, http_status: res.status, to, from },
+      error: twilioErrorMessage(payload, res.status),
     };
   }
   return {
     ok: true,
     sim: false,
     status: "in_progress",
-    meta: { twilio: payload, http_status: res.status },
+    meta: { twilio: payload, http_status: res.status, to, from },
     providerCallId: String((payload as Record<string, string>)?.sid || "") || undefined,
   };
 }
@@ -455,11 +513,23 @@ Deno.serve(async (req) => {
     await assertUsageLimit(db, tenantId, "voice_minutes", 1);
 
     const comm = await resolveTenantComm(db, tenantId);
-    const phone = String(call.phone || "").trim();
-    if (!phone) throw new Error("call has no phone");
+    const phoneRaw = String(call.phone || "").trim();
+    if (!phoneRaw) throw new Error("call has no phone");
 
     const provider = (comm.voiceProvider || "stub").toLowerCase();
     const script = String(call.script || "Hello from DG.YARD").slice(0, 500);
+
+    // Twilio / Telnyx / Plivo expect E.164 — normalize 10-digit Indian numbers to +91…
+    const phone = ["twilio", "telnyx", "plivo", "vonage", "nexmo"].includes(provider)
+      ? toE164(phoneRaw)
+      : phoneRaw;
+
+    if (phone !== phoneRaw) {
+      await db.from("bos_voice_calls").update({
+        phone,
+        updated_at: new Date().toISOString(),
+      }).eq("id", callId);
+    }
 
     let result: DialResult = {
       ok: false,

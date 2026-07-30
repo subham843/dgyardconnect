@@ -586,21 +586,34 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
       final dial = await _repo.dialVoiceCall(call.id);
       if (mounted) {
         final sim = dial['sim'] == true;
+        final err = dial['error']?.toString();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              sim
-                  ? 'Stub dial — set ${call.voiceProviderLabel} secrets in Settings'
-                  : 'Live dial started (${dial['provider'] ?? call.voiceProviderLabel})',
+              err != null && err.isNotEmpty
+                  ? err
+                  : sim
+                      ? 'Stub dial — set ${call.voiceProviderLabel} secrets in Settings'
+                      : 'Live dial started (${dial['provider'] ?? call.voiceProviderLabel})'
+                          '${dial['to'] != null ? ' → ${dial['to']}' : ''}',
             ),
+            backgroundColor: err != null ? Colors.orange.shade800 : null,
           ),
         );
       }
       _load();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        final msg = '$e'.replaceFirst('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: Colors.orange.shade800,
+            duration: const Duration(seconds: 8),
+          ),
+        );
       }
+      _load();
     }
   }
 
