@@ -63,6 +63,9 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   String _sarvamModel = 'bulbul:v3';
   String _sarvamSpeaker = 'shubh';
   String _sarvamHint = '';
+  /// all | female | male
+  String _sarvamGenderFilter = 'all';
+  String? _samplingSpeaker;
   Map<String, dynamic>? _voiceReady;
   bool _loadingReady = false;
   List<Map<String, dynamic>> _voiceEventDogfood = [];
@@ -444,6 +447,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   static const _sarvamSpeakersV3 = [
     'shubh',
     'aditya',
+    'ritu',
     'priya',
     'neha',
     'rahul',
@@ -481,8 +485,127 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     'rilu',
   ];
 
+  /// Sarvam catalog genders (v2 + v3).
+  static const _sarvamFemale = {
+    'anushka',
+    'manisha',
+    'vidya',
+    'arya',
+    'ritu',
+    'priya',
+    'neha',
+    'pooja',
+    'simran',
+    'kavya',
+    'ishita',
+    'shreya',
+    'roopa',
+    'tanya',
+    'shruti',
+    'suhani',
+    'kavitha',
+    'rupali',
+    'rilu',
+  };
+
+  static const _sarvamMale = {
+    'abhilash',
+    'karun',
+    'hitesh',
+    'shubh',
+    'aditya',
+    'rahul',
+    'rohan',
+    'amit',
+    'dev',
+    'ratan',
+    'varun',
+    'manan',
+    'sumit',
+    'kabir',
+    'aayan',
+    'ashutosh',
+    'advait',
+    'anand',
+    'tarun',
+    'sunny',
+    'mani',
+    'gokul',
+    'vijay',
+    'mohit',
+    'rehan',
+    'soham',
+  };
+
   List<String> _speakersForModel(String model) =>
       model.contains('v2') ? _sarvamSpeakersV2 : _sarvamSpeakersV3;
+
+  String _speakerGender(String id) {
+    if (_sarvamFemale.contains(id)) return 'Female';
+    if (_sarvamMale.contains(id)) return 'Male';
+    return 'Voice';
+  }
+
+  List<String> _filteredSpeakers() {
+    final all = _speakersForModel(_sarvamModel);
+    if (_sarvamGenderFilter == 'female') {
+      return all.where((s) => _speakerGender(s) == 'Female').toList();
+    }
+    if (_sarvamGenderFilter == 'male') {
+      return all.where((s) => _speakerGender(s) == 'Male').toList();
+    }
+    return all;
+  }
+
+  Future<void> _playSpeakerSample(String speaker) async {
+    if (!BosPermissions.canManageSettings && !BosPermissions.canEdit) {
+      _denied();
+      return;
+    }
+    setState(() => _samplingSpeaker = speaker);
+    try {
+      final female = _speakerGender(speaker) == 'Female';
+      final sample = female
+          ? 'Namaste, main ${speaker[0].toUpperCase()}${speaker.substring(1)} bol rahi hoon. Yeh DG.YARD AI voice sample hai.'
+          : 'Namaste, main ${speaker[0].toUpperCase()}${speaker.substring(1)} bol raha hoon. Yeh DG.YARD AI voice sample hai.';
+      final r = await _repo.previewVoiceTts(
+        text: sample,
+        language: _aiLanguage == 'en' ? 'en-IN' : 'hi-IN',
+        speaker: speaker,
+        model: _sarvamModel,
+      );
+      if (!mounted) return;
+      if (r['sim'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${r['note'] ?? 'Set Sarvam API key to hear samples'}')),
+        );
+        return;
+      }
+      final b64 = r['audio_base64']?.toString();
+      if (b64 == null || b64.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No sample audio from Sarvam')),
+        );
+        return;
+      }
+      playBase64Audio(b64, contentType: '${r['content_type'] ?? 'audio/wav'}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Sample · ${speaker[0].toUpperCase()}${speaker.substring(1)} (${_speakerGender(speaker)})',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _samplingSpeaker = null);
+    }
+  }
 
   Future<void> _verifyVoiceKeys() async {
     if (!BosPermissions.canManageSettings && !BosPermissions.canEdit) {
@@ -1484,31 +1607,92 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                       : null,
                 ),
                 const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: _speakersForModel(_sarvamModel).contains(_sarvamSpeaker)
-                      ? _sarvamSpeaker
-                      : (_sarvamModel.contains('v2') ? 'anushka' : 'shubh'),
-                  decoration: const InputDecoration(
-                    labelText: 'Sarvam voice (Indian speakers)',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: _speakersForModel(_sarvamModel)
-                      .map(
-                        (s) => DropdownMenuItem(
-                          value: s,
-                          child: Text(s[0].toUpperCase() + s.substring(1)),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (BosPermissions.canManageSettings || BosPermissions.canEdit)
-                      ? (v) => setState(() => _sarvamSpeaker = v ?? _sarvamSpeaker)
-                      : null,
-                ),
-                const SizedBox(height: 4),
                 Text(
-                  'Test: Save Sarvam key → choose voice → Preview TTS. '
-                  'Language follows AI agent language (hi-IN / en-IN).',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  'Sarvam voices — tap to select, ▶ for sample',
+                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey.shade800),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    for (final f in const [
+                      ('all', 'All'),
+                      ('female', 'Female'),
+                      ('male', 'Male'),
+                    ])
+                      ChoiceChip(
+                        label: Text(f.$2),
+                        selected: _sarvamGenderFilter == f.$1,
+                        onSelected: (_) => setState(() => _sarvamGenderFilter = f.$1),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  constraints: const BoxConstraints(maxHeight: 280),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _filteredSpeakers().length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final id = _filteredSpeakers()[i];
+                      final gender = _speakerGender(id);
+                      final selected = _sarvamSpeaker == id;
+                      final sampling = _samplingSpeaker == id;
+                      final label = '${id[0].toUpperCase()}${id.substring(1)}';
+                      return ListTile(
+                        dense: true,
+                        selected: selected,
+                        selectedTileColor: Colors.teal.shade50,
+                        leading: Icon(
+                          gender == 'Female' ? Icons.woman : Icons.man,
+                          color: gender == 'Female' ? Colors.pink.shade400 : Colors.blue.shade700,
+                        ),
+                        title: Text(label),
+                        subtitle: Text(gender),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (selected)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: Icon(Icons.check_circle, color: Colors.teal, size: 18),
+                              ),
+                            IconButton(
+                              tooltip: 'Play sample',
+                              onPressed: sampling ||
+                                      !(BosPermissions.canManageSettings || BosPermissions.canEdit)
+                                  ? null
+                                  : () => _playSpeakerSample(id),
+                              icon: sampling
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.play_circle_outline),
+                            ),
+                          ],
+                        ),
+                        onTap: (BosPermissions.canManageSettings || BosPermissions.canEdit)
+                            ? () => setState(() => _sarvamSpeaker = id)
+                            : null,
+                      );
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Selected: ${_sarvamSpeaker[0].toUpperCase()}${_sarvamSpeaker.substring(1)} '
+                    '(${_speakerGender(_sarvamSpeaker)}) · Save settings to keep. '
+                    'Sample needs Sarvam API key.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  ),
                 ),
                 const SizedBox(height: 8),
                 TextField(

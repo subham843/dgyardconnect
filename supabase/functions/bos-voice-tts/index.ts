@@ -61,6 +61,7 @@ export const SARVAM_SPEAKERS_V3 = [
   "soham",
   "rupali",
   "rilu",
+  "ritu",
 ] as const;
 
 const ALL_SPEAKERS = new Set<string>([...SARVAM_SPEAKERS_V2, ...SARVAM_SPEAKERS_V3]);
