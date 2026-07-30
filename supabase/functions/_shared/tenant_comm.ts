@@ -41,6 +41,7 @@ export type TenantCommConfig = {
   voiceApiToken: string;
   voiceAccountSid: string;
   voiceNumber: string;
+  openaiApiKey: string;
 };
 
 /** Prefer tenant api_secrets/api_config; fall back to global Edge env. */
@@ -68,11 +69,17 @@ export async function resolveTenantComm(
   const smsSec = (typeof sec.sms === "object" ? sec.sms : {}) as Record<string, string>;
   const emailSec = (typeof sec.email === "object" ? sec.email : {}) as Record<string, string>;
   const voiceSec = (typeof sec.voice === "object" ? sec.voice : {}) as Record<string, string>;
+  const openaiSec = (typeof sec.openai === "object" ? sec.openai : {}) as Record<string, string>;
 
   // Legacy flat placeholders
   const legacyWa = typeof sec.whatsapp === "string" ? sec.whatsapp : "";
-  const legacyOpenAi = typeof sec.openai === "string" ? sec.openai : "";
-  void legacyOpenAi;
+  const legacyOpenAi =
+    typeof sec.openai === "string"
+      ? sec.openai
+      : openaiSec.api_key ||
+        (typeof (row?.api_keys_placeholder as Record<string, string>)?.openai === "string"
+          ? (row?.api_keys_placeholder as Record<string, string>).openai
+          : "");
 
   return {
     whatsappToken: waSec.access_token || legacyWa || Deno.env.get("WHATSAPP_TOKEN") || "",
@@ -118,5 +125,6 @@ export async function resolveTenantComm(
       Deno.env.get("EXOTEL_ACCOUNT_SID") ||
       "",
     voiceNumber: cfg.voice?.number || voiceSec.number || Deno.env.get("EXOTEL_NUMBER") || "",
+    openaiApiKey: legacyOpenAi || Deno.env.get("OPENAI_API_KEY") || "",
   };
 }

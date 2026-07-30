@@ -161,6 +161,7 @@ Deno.serve(async (req) => {
         channel,
         reply: replyJson.reply ?? null,
         intent: replyJson.intent ?? null,
+        citations: replyJson.citations ?? [],
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

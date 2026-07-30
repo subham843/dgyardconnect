@@ -2602,8 +2602,9 @@ ${e.answers}
 
   Future<Map<String, dynamic>> fullAnalytics() async {
     final base = await overviewStats();
+    final sales = await aiSalesStats();
     final client = await SupabaseRepositoryBase.clientWithAuth();
-    if (client == null) return base;
+    if (client == null) return {...base, ...sales};
     final tid = await activeTenantId;
     final tickets = await client
         .from('bos_tickets')
@@ -2617,7 +2618,7 @@ ${e.answers}
         .isFilter('deleted_at', null);
     final campaigns = await client
         .from('bos_campaigns')
-        .select('status,sent_count')
+        .select('status,sent_count,failed_count')
         .eq('tenant_id', tid)
         .isFilter('deleted_at', null);
     final quotes = await client
@@ -2625,29 +2626,84 @@ ${e.answers}
         .select('status,total_paise')
         .eq('tenant_id', tid)
         .isFilter('deleted_at', null);
+    final usage = await client
+        .from('bos_usage_events')
+        .select('metric,quantity,occurred_at')
+        .eq('tenant_id', tid)
+        .gte('occurred_at', DateTime.now().subtract(const Duration(days: 30)).toIso8601String());
+    final recipients = await client
+        .from('bos_campaign_recipients')
+        .select('delivery_status')
+        .eq('tenant_id', tid);
     final ticketRows = tickets as List;
     final openTickets = ticketRows.where((t) => t['status'] == 'open' || t['status'] == 'in_progress').length;
     final projectRows = projects as List;
     final activeProjects = projectRows.where((p) => p['status'] == 'active').length;
     final campaignRows = campaigns as List;
     var campaignSent = 0;
+    var campaignFailed = 0;
     for (final c in campaignRows) {
       campaignSent += (c['sent_count'] as num?)?.toInt() ?? 0;
+      campaignFailed += (c['failed_count'] as num?)?.toInt() ?? 0;
     }
     final quoteRows = quotes as List;
     var quoteValue = 0;
     for (final q in quoteRows) {
       quoteValue += (q['total_paise'] as num?)?.toInt() ?? 0;
     }
+    final usageTotals = <String, num>{};
+    for (final u in usage as List) {
+      final m = '${u['metric']}';
+      usageTotals[m] = (usageTotals[m] ?? 0) + ((u['quantity'] as num?) ?? 1);
+    }
+    final deliveryBreakdown = <String, int>{};
+    for (final r in recipients as List) {
+      final s = '${r['delivery_status'] ?? 'unknown'}';
+      deliveryBreakdown[s] = (deliveryBreakdown[s] ?? 0) + 1;
+    }
+    Map<String, dynamic>? platform;
+    try {
+      if (SupabaseAuthService.instance.currentJwtIsSuperadmin) {
+        platform = await superAdminPlatformStats();
+      }
+    } catch (_) {}
     return {
       ...base,
+      ...sales,
       'tickets_open': openTickets,
       'tickets_total': ticketRows.length,
       'projects_active': activeProjects,
       'projects_total': projectRows.length,
       'campaign_sends': campaignSent,
+      'campaign_failed': campaignFailed,
       'quotation_value_paise': quoteValue,
+      'usage_30d': usageTotals,
+      'delivery_breakdown': deliveryBreakdown,
+      if (platform != null) 'platform': platform,
     };
+  }
+
+  Future<Map<String, int>> campaignDeliveryBreakdown(String campaignId) async {
+    final rows = await listCampaignRecipients(campaignId);
+    final out = <String, int>{};
+    for (final r in rows) {
+      final s = '${r['delivery_status'] ?? r['status'] ?? 'unknown'}';
+      out[s] = (out[s] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  Future<List<Map<String, dynamic>>> listOutboundEvents({String? campaignId, int limit = 50}) async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) return [];
+    final tid = await activeTenantId;
+    var q = client
+        .from('bos_outbound_events')
+        .select()
+        .eq('tenant_id', tid);
+    if (campaignId != null) q = q.eq('campaign_id', campaignId);
+    final res = await q.order('created_at', ascending: false).limit(limit);
+    return (res as List).map((r) => SupabaseRepositoryBase.rowToMap(r)).toList();
   }
 
   Future<void> applyMarketplaceInstall(String itemId) async {

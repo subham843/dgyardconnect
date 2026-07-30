@@ -198,7 +198,8 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
           SnackBar(
             content: Text(
               'AI · ${result['intent'] ?? '?'} · '
-              '${result['sent'] == true ? 'sent' : result['status'] ?? 'saved'}',
+              '${result['sent'] == true ? 'sent' : result['status'] ?? 'saved'}'
+              '${(result['citations'] is List && (result['citations'] as List).isNotEmpty) ? ' · ${(result['citations'] as List).length} sources' : ''}',
             ),
           ),
         );
@@ -331,6 +332,7 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
                                       itemBuilder: (_, i) {
                                         final m = _messages[i];
                                         final outbound = m.direction == 'outbound';
+                                        final cites = m.citations;
                                         return Align(
                                           alignment: outbound
                                               ? Alignment.centerRight
@@ -345,7 +347,35 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
                                                   : const Color(0xFFF1F5F9),
                                               borderRadius: BorderRadius.circular(10),
                                             ),
-                                            child: Text(m.body ?? ''),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(m.body ?? ''),
+                                                if (cites.isNotEmpty) ...[
+                                                  const SizedBox(height: 8),
+                                                  Text(
+                                                    'Sources',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      fontWeight: FontWeight.w600,
+                                                      color: Colors.grey.shade700,
+                                                    ),
+                                                  ),
+                                                  ...cites.take(3).map(
+                                                    (c) => Padding(
+                                                      padding: const EdgeInsets.only(top: 4),
+                                                      child: Text(
+                                                        '• ${c['title'] ?? 'KB'}: ${c['excerpt'] ?? ''}',
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          color: Colors.grey.shade800,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
                                           ),
                                         );
                                       },

@@ -547,6 +547,7 @@ class BosMessage {
     required this.createdAt,
     this.body,
     this.status,
+    this.meta,
   });
 
   final String id;
@@ -556,6 +557,16 @@ class BosMessage {
   final String? body;
   final String? status;
   final DateTime createdAt;
+  final Map<String, dynamic>? meta;
+
+  List<Map<String, dynamic>> get citations {
+    final raw = meta?['citations'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
 
   factory BosMessage.fromMap(Map<String, dynamic> map) => BosMessage(
         id: map['id'] as String,
@@ -565,6 +576,7 @@ class BosMessage {
         body: map['body'] as String?,
         status: map['status'] as String?,
         createdAt: DateTime.parse(map['created_at'] as String),
+        meta: map['meta'] is Map ? Map<String, dynamic>.from(map['meta'] as Map) : null,
       );
 }
 

@@ -20,6 +20,7 @@ class _AdminAiOsCampaignsScreenState extends State<AdminAiOsCampaignsScreen>
   List<BosCampaign> _campaigns = [];
   List<BosWaTemplate> _templates = [];
   List<Map<String, dynamic>> _optOuts = [];
+  final _deliveryByCampaign = <String, Map<String, int>>{};
   bool _loading = true;
 
   @override
@@ -40,11 +41,20 @@ class _AdminAiOsCampaignsScreenState extends State<AdminAiOsCampaignsScreen>
     final campaigns = await _repo.listCampaigns();
     final templates = await _repo.listWaTemplates();
     final optOuts = await _repo.listOptOuts();
+    final breakdowns = <String, Map<String, int>>{};
+    for (final c in campaigns.take(20)) {
+      try {
+        breakdowns[c.id] = await _repo.campaignDeliveryBreakdown(c.id);
+      } catch (_) {}
+    }
     if (mounted) {
       setState(() {
         _campaigns = campaigns;
         _templates = templates;
         _optOuts = optOuts;
+        _deliveryByCampaign
+          ..clear()
+          ..addAll(breakdowns);
         _loading = false;
       });
     }
@@ -247,26 +257,56 @@ class _AdminAiOsCampaignsScreenState extends State<AdminAiOsCampaignsScreen>
 
   Future<void> _showRecipients(BosCampaign campaign) async {
     final rows = await _repo.listCampaignRecipients(campaign.id);
+    final events = await _repo.listOutboundEvents(campaignId: campaign.id, limit: 30);
     if (!mounted) return;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Recipients · ${campaign.name}'),
+        title: Text('Delivery · ${campaign.name}'),
         content: SizedBox(
-          width: 480,
-          height: 360,
-          child: ListView.builder(
-            itemCount: rows.length,
-            itemBuilder: (_, i) {
-              final r = rows[i];
-              return ListTile(
-                dense: true,
-                title: Text('${r['full_name'] ?? ''} · ${r['phone'] ?? r['email'] ?? ''}'),
-                subtitle: Text(
-                  '${r['status']} · ${r['delivery_status'] ?? '-'}',
+          width: 520,
+          height: 420,
+          child: DefaultTabController(
+            length: 2,
+            child: Column(
+              children: [
+                const TabBar(tabs: [Tab(text: 'Recipients'), Tab(text: 'Events')]),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      ListView.builder(
+                        itemCount: rows.length,
+                        itemBuilder: (_, i) {
+                          final r = rows[i];
+                          final err = r['error']?.toString();
+                          return ListTile(
+                            dense: true,
+                            title: Text('${r['full_name'] ?? ''} · ${r['phone'] ?? r['email'] ?? ''}'),
+                            subtitle: Text(
+                              '${r['delivery_status'] ?? r['status'] ?? '-'}'
+                              '${r['sent_at'] != null ? ' · ${r['sent_at']}' : ''}'
+                              '${err != null && err.isNotEmpty ? '\n$err' : ''}',
+                            ),
+                          );
+                        },
+                      ),
+                      ListView.builder(
+                        itemCount: events.length,
+                        itemBuilder: (_, i) {
+                          final e = events[i];
+                          return ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.timeline, size: 18),
+                            title: Text('${e['event_type']} · ${e['channel'] ?? ''}'),
+                            subtitle: Text('${e['created_at'] ?? ''}'),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              );
-            },
+              ],
+            ),
           ),
         ),
         actions: [
@@ -383,13 +423,18 @@ class _AdminAiOsCampaignsScreenState extends State<AdminAiOsCampaignsScreen>
                           itemCount: _campaigns.length,
                           itemBuilder: (_, i) {
                             final c = _campaigns[i];
+                            final br = _deliveryByCampaign[c.id] ?? const {};
+                            final brLabel = br.isEmpty
+                                ? ''
+                                : ' · ${br.entries.map((e) => '${e.key}:${e.value}').join(' ')}';
                             return ListTile(
                               leading: Icon(_channelIcon(c.channel)),
                               title: Text(c.name),
                               subtitle: Text(
                                 '${c.channel ?? 'whatsapp'} · ${c.status} · sent ${c.sentCount}'
                                 '${c.segmentPreset.isNotEmpty ? ' · ${c.segmentPreset}' : ''}'
-                                '${c.triggerVoice ? ' · +voice' : ''}',
+                                '${c.triggerVoice ? ' · +voice' : ''}'
+                                '$brLabel',
                               ),
                               trailing: Wrap(
                                 spacing: 4,

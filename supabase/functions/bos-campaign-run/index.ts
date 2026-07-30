@@ -222,7 +222,12 @@ Deno.serve(async (req) => {
             comm.whatsappPhoneNumberId,
           );
           providerMeta = wa.meta;
-          deliveryStatus = wa.sent ? "sent" : "queued";
+          // Missing secrets → queued (retry later); live API failure → failed
+          deliveryStatus = wa.sent
+            ? "sent"
+            : (!comm.whatsappToken || !comm.whatsappPhoneNumberId)
+            ? "queued"
+            : "failed";
 
           let { data: conv } = await db
             .from("bos_conversations")
@@ -267,7 +272,7 @@ Deno.serve(async (req) => {
             comm.twilioFrom,
           );
           providerMeta = sms.meta;
-          deliveryStatus = sms.sent ? "sent" : "sent_sim";
+          deliveryStatus = sms.sent ? "sent" : (sms.sim ? "sent_sim" : "failed");
           activityType = "sms.sent";
         } else if (channel === "email" && email) {
           const subject = (campaign.name as string) || "DG.YARD update";
@@ -280,26 +285,48 @@ Deno.serve(async (req) => {
             comm.emailFrom,
           );
           providerMeta = em.meta;
-          deliveryStatus = em.sent ? "sent" : "sent_sim";
+          deliveryStatus = em.sent ? "sent" : (em.sim ? "sent_sim" : "failed");
           activityType = "email.sent";
         }
 
         if (campaign.trigger_voice && phone) {
+          const callId = crypto.randomUUID();
           await db.from("bos_voice_calls").insert({
-            id: crypto.randomUUID(),
+            id: callId,
             tenant_id: tenantId,
             phone,
             direction: "outbound",
             status: "queued",
-            provider: "exotel",
+            provider: comm.voiceProvider === "stub" ? "stub" : comm.voiceProvider,
             meta: { campaign_id: campaignId },
           });
+          // Best-effort live dial when voice secrets set
+          try {
+            const dialUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/bos-voice-dial`;
+            const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+            await fetch(dialUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${key}`,
+              },
+              body: JSON.stringify({ call_id: callId, tenant_id: tenantId }),
+            });
+          } catch (_) { /* non-fatal */ }
         }
 
+        const recipStatus =
+          deliveryStatus === "failed"
+            ? "failed"
+            : deliveryStatus === "queued"
+            ? "queued"
+            : "sent";
+
         await db.from("bos_campaign_recipients").update({
-          status: deliveryStatus === "queued" ? "queued" : "sent",
+          status: recipStatus,
           delivery_status: deliveryStatus,
-          sent_at: new Date().toISOString(),
+          sent_at: deliveryStatus === "failed" ? null : new Date().toISOString(),
+          error: deliveryStatus === "failed" ? JSON.stringify(providerMeta).slice(0, 400) : null,
           meta: {
             ...(r.meta ?? {}),
             provider: providerMeta,
@@ -331,7 +358,8 @@ Deno.serve(async (req) => {
           });
         }
 
-        sent++;
+        if (deliveryStatus === "failed") failed++;
+        else sent++;
       } catch (err) {
         failed++;
         await db.from("bos_campaign_recipients").update({

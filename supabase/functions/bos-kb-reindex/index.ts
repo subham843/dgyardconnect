@@ -2,6 +2,7 @@
 // Body: { document_id?, tenant_id?, reindex_all?: boolean }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { resolveTenantComm } from "../_shared/tenant_comm.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,8 +28,8 @@ function chunkText(text: string, size = 500): string[] {
   return chunks;
 }
 
-async function embedTexts(texts: string[]): Promise<number[][]> {
-  const openai = Deno.env.get("OPENAI_API_KEY") ?? "";
+async function embedTexts(texts: string[], openaiKey: string): Promise<number[][]> {
+  const openai = openaiKey || Deno.env.get("OPENAI_API_KEY") || "";
   if (!openai || texts.length === 0) {
     return texts.map(() => []);
   }
@@ -105,6 +106,7 @@ Deno.serve(async (req) => {
     const reindexAll = Boolean(body.reindex_all);
 
     const db = admin();
+    const comm = await resolveTenantComm(db, tenantId);
     let query = db
       .from("bos_kb_documents")
       .select("*")
@@ -123,7 +125,7 @@ Deno.serve(async (req) => {
       await db.from("bos_kb_chunks").delete().eq("document_id", doc.id);
 
       const parts = chunkText(`${doc.title}\n${doc.body ?? ""}`);
-      const vectors = await embedTexts(parts);
+      const vectors = await embedTexts(parts, comm.openaiApiKey);
       const pointIds: string[] = [];
       const qPoints: Array<{ id: string; vector: number[]; payload: Record<string, unknown> }> = [];
 

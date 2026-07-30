@@ -56,7 +56,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   final _emailKeyCtrl = TextEditingController();
   final _emailFromCtrl = TextEditingController();
   final _voiceKeyCtrl = TextEditingController();
+  final _voiceTokenCtrl = TextEditingController();
+  final _voiceSidCtrl = TextEditingController();
   final _voiceNumberCtrl = TextEditingController();
+  final _smsSidCtrl = TextEditingController();
   final _workStartCtrl = TextEditingController(text: '9');
   final _workEndCtrl = TextEditingController(text: '20');
   final _aiAgentNameCtrl = TextEditingController(text: 'DG.YARD Sales Agent');
@@ -86,7 +89,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     _emailKeyCtrl.dispose();
     _emailFromCtrl.dispose();
     _voiceKeyCtrl.dispose();
+    _voiceTokenCtrl.dispose();
+    _voiceSidCtrl.dispose();
     _voiceNumberCtrl.dispose();
+    _smsSidCtrl.dispose();
     _workStartCtrl.dispose();
     _workEndCtrl.dispose();
     _aiAgentNameCtrl.dispose();
@@ -282,21 +288,37 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     if (_waTokenCtrl.text.trim().isNotEmpty) {
       secrets['whatsapp'] = {'access_token': _waTokenCtrl.text.trim()};
     }
-    if (_smsKeyCtrl.text.trim().isNotEmpty) {
-      secrets['sms'] = {'api_key': _smsKeyCtrl.text.trim()};
+    if (_smsKeyCtrl.text.trim().isNotEmpty || _smsSidCtrl.text.trim().isNotEmpty) {
+      secrets['sms'] = {
+        if (_smsKeyCtrl.text.trim().isNotEmpty) 'api_key': _smsKeyCtrl.text.trim(),
+        if (_smsSidCtrl.text.trim().isNotEmpty) 'account_sid': _smsSidCtrl.text.trim(),
+      };
     }
     if (_emailKeyCtrl.text.trim().isNotEmpty) {
       secrets['email'] = {'api_key': _emailKeyCtrl.text.trim()};
     }
-    if (_voiceKeyCtrl.text.trim().isNotEmpty) {
-      secrets['voice'] = {'api_key': _voiceKeyCtrl.text.trim()};
+    if (_voiceKeyCtrl.text.trim().isNotEmpty ||
+        _voiceTokenCtrl.text.trim().isNotEmpty ||
+        _voiceSidCtrl.text.trim().isNotEmpty) {
+      secrets['voice'] = {
+        if (_voiceKeyCtrl.text.trim().isNotEmpty) 'api_key': _voiceKeyCtrl.text.trim(),
+        if (_voiceTokenCtrl.text.trim().isNotEmpty) 'api_token': _voiceTokenCtrl.text.trim(),
+        if (_voiceSidCtrl.text.trim().isNotEmpty) 'account_sid': _voiceSidCtrl.text.trim(),
+      };
+    }
+    if (_openaiCtrl.text.trim().isNotEmpty) {
+      secrets['openai'] = {'api_key': _openaiCtrl.text.trim()};
     }
     if (secrets.isNotEmpty) {
       await _repo.upsertTenantApiConfig(apiSecrets: secrets);
       _waTokenCtrl.clear();
       _smsKeyCtrl.clear();
+      _smsSidCtrl.clear();
       _emailKeyCtrl.clear();
       _voiceKeyCtrl.clear();
+      _voiceTokenCtrl.clear();
+      _voiceSidCtrl.clear();
+      _openaiCtrl.clear();
     }
     await _repo.writeAuditLog(
       action: 'tenant.settings_update',
@@ -619,14 +641,25 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   ),
                   obscureText: true,
                 ),
-                TextField(controller: _openaiCtrl, decoration: const InputDecoration(labelText: 'OpenAI key placeholder')),
+                TextField(
+                  controller: _openaiCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'OpenAI API key (tenant — embeddings/AI reply)',
+                  ),
+                  obscureText: true,
+                ),
                 TextField(
                   controller: _smsSenderCtrl,
-                  decoration: const InputDecoration(labelText: 'SMS sender ID'),
+                  decoration: const InputDecoration(labelText: 'SMS sender ID / From'),
+                ),
+                TextField(
+                  controller: _smsSidCtrl,
+                  decoration: const InputDecoration(labelText: 'Twilio Account SID (SMS)'),
+                  obscureText: true,
                 ),
                 TextField(
                   controller: _smsKeyCtrl,
-                  decoration: const InputDecoration(labelText: 'SMS API key (paste to update)'),
+                  decoration: const InputDecoration(labelText: 'SMS API key / Auth token (paste to update)'),
                   obscureText: true,
                 ),
                 TextField(
@@ -643,8 +676,18 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   decoration: const InputDecoration(labelText: 'Voice caller number'),
                 ),
                 TextField(
+                  controller: _voiceSidCtrl,
+                  decoration: const InputDecoration(labelText: 'Exotel/Twilio Account SID'),
+                  obscureText: true,
+                ),
+                TextField(
                   controller: _voiceKeyCtrl,
                   decoration: const InputDecoration(labelText: 'Voice API key (paste to update)'),
+                  obscureText: true,
+                ),
+                TextField(
+                  controller: _voiceTokenCtrl,
+                  decoration: const InputDecoration(labelText: 'Voice API token (Exotel)'),
                   obscureText: true,
                 ),
                 const SizedBox(height: 12),
@@ -750,7 +793,6 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   items: const [
                     DropdownMenuItem(value: 'stub', child: Text('Stub (queued / sent_sim)')),
                     DropdownMenuItem(value: 'twilio', child: Text('Twilio (live when secrets set)')),
-                    DropdownMenuItem(value: 'msg91', child: Text('MSG91 (placeholder)')),
                   ],
                   onChanged: BosPermissions.canManageSettings || BosPermissions.canEdit
                       ? (v) => setState(() => _smsProvider = v ?? 'stub')
@@ -766,7 +808,6 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   items: const [
                     DropdownMenuItem(value: 'stub', child: Text('Stub (queued / sent_sim)')),
                     DropdownMenuItem(value: 'resend', child: Text('Resend (live when secrets set)')),
-                    DropdownMenuItem(value: 'sendgrid', child: Text('SendGrid (placeholder)')),
                   ],
                   onChanged: BosPermissions.canManageSettings || BosPermissions.canEdit
                       ? (v) => setState(() => _emailProvider = v ?? 'stub')
@@ -782,6 +823,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   items: const [
                     DropdownMenuItem(value: 'stub', child: Text('Stub simulate')),
                     DropdownMenuItem(value: 'exotel', child: Text('Exotel (when secrets set)')),
+                    DropdownMenuItem(value: 'twilio', child: Text('Twilio (when secrets set)')),
                   ],
                   onChanged: BosPermissions.canManageSettings || BosPermissions.canEdit
                       ? (v) => setState(() => _voiceProvider = v ?? 'stub')
@@ -790,7 +832,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 const SizedBox(height: 8),
                 Text(
                   'Follow-up sequence (saved): Day0 WA → Day1 SMS → Day3 Email → Day7 WA offer → Day15 Email. '
-                  'Public chat: /ai-os/chat. Real API keys stay in Edge secrets.',
+                  'Public chat: /ai-os/chat. Paste live keys above (masked after save).',
                   style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
                 ),
                 const SizedBox(height: 24),
