@@ -35,6 +35,7 @@ type DialResult = {
   status: string;
   meta: Record<string, unknown>;
   error?: string;
+  providerCallId?: string;
 };
 
 function missing(...parts: string[]) {
@@ -84,6 +85,12 @@ async function dialExotel(comm: TenantCommConfig, phone: string): Promise<DialRe
     sim: false,
     status: "in_progress",
     meta: { exotel: payload, http_status: res.status },
+    providerCallId: String(
+      (payload as Record<string, Record<string, string>>)?.Call?.Sid ||
+        (payload as Record<string, string>)?.CallSid ||
+        (payload as Record<string, string>)?.Sid ||
+        "",
+    ) || undefined,
   };
 }
 
@@ -135,6 +142,7 @@ async function dialTwilio(
     sim: false,
     status: "in_progress",
     meta: { twilio: payload, http_status: res.status },
+    providerCallId: String((payload as Record<string, string>)?.sid || "") || undefined,
   };
 }
 
@@ -431,6 +439,8 @@ Deno.serve(async (req) => {
         voice_provider: result.sim ? "stub" : provider,
         dial_sim: result.sim,
         dial_at: new Date().toISOString(),
+        provider_call_id: result.providerCallId ||
+          (call.meta as Record<string, string>)?.provider_call_id,
         provider_note: result.sim
           ? `Stub — add secrets under api_secrets.voice.${provider}`
           : `Live ${provider} dial started`,

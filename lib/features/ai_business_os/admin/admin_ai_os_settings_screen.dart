@@ -41,6 +41,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   String _businessType = 'cctv_integrator';
   bool get _isSuperadmin => SupabaseAuthService.instance.currentJwtIsSuperadmin;
   bool _testingDial = false;
+  bool _verifyingKeys = false;
 
   final _nameCtrl = TextEditingController();
   final _primaryCtrl = TextEditingController();
@@ -229,6 +230,36 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
         }
       } catch (_) { /* optional */ }
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _verifyVoiceKeys() async {
+    if (!BosPermissions.canManageSettings && !BosPermissions.canEdit) {
+      _denied();
+      return;
+    }
+    setState(() => _verifyingKeys = true);
+    try {
+      await _saveProfile();
+      final r = await _repo.verifyVoiceProvider(provider: _voiceProvider);
+      if (!mounted) return;
+      final live = r['live'] == true || r['ok'] == true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            live
+                ? 'Verify OK · ${r['provider']} credentials look valid'
+                : 'Verify failed · ${r['error'] ?? r['provider']}',
+          ),
+          backgroundColor: live ? Colors.teal : Colors.orange.shade800,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _verifyingKeys = false);
     }
   }
 
@@ -986,6 +1017,20 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                           ? _saveProfile
                           : null,
                       child: const Text('Save settings'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _verifyingKeys ||
+                              !(BosPermissions.canManageSettings || BosPermissions.canEdit)
+                          ? null
+                          : _verifyVoiceKeys,
+                      icon: _verifyingKeys
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.verified_user_outlined),
+                      label: Text(_verifyingKeys ? 'Verifying…' : 'Verify keys'),
                     ),
                     OutlinedButton.icon(
                       onPressed: _testingDial ||

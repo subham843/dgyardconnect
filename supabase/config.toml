@@ -74,3 +74,9 @@ verify_jwt = false
 
 [functions.bos-voice-dial]
 verify_jwt = false
+
+[functions.bos-voice-webhook]
+verify_jwt = false
+
+[functions.bos-voice-verify]
+verify_jwt = false

@@ -2385,6 +2385,7 @@ ${e.answers}
     String? outcome,
     DateTime? nextFollowUpAt,
     String? transcript,
+    String? audioUrl,
     int? durationSec,
   }) async {
     final token = SupabaseAuthService.instance.accessToken;
@@ -2399,6 +2400,7 @@ ${e.answers}
         if (outcome != null) 'outcome': outcome,
         if (nextFollowUpAt != null) 'next_follow_up_at': nextFollowUpAt.toIso8601String(),
         if (transcript != null) 'transcript': transcript,
+        if (audioUrl != null && audioUrl.isNotEmpty) 'audio_url': audioUrl,
         if (durationSec != null) 'duration_sec': durationSec,
       }),
     );
@@ -2455,17 +2457,19 @@ ${e.answers}
         'Are you available for a quick follow-up?';
 
     final when = scheduledAt ?? lead.nextFollowUpAt ?? DateTime.now();
+    final voiceProvider = await resolveActiveVoiceProvider();
     final id = await createVoiceCall({
       'phone': dial,
       'status': 'queued',
       'direction': 'outbound',
-      'provider': 'exotel',
+      'provider': voiceProvider,
       'script': script,
       'lead_id': leadId,
       'scheduled_at': when.toIso8601String(),
       'meta': {
         'source': 'follow_up',
         'scheduled_at': when.toIso8601String(),
+        'voice_provider': voiceProvider,
       },
     });
     await addActivity(
@@ -2490,7 +2494,46 @@ ${e.answers}
     return id;
   }
 
-  /// Place outbound call via Edge (`bos-voice-dial`) — Exotel when secrets set.
+  /// Active voice provider from tenant settings (api_config / ai_sales).
+  Future<String> resolveActiveVoiceProvider() async {
+    try {
+      final cfg = await getTenantApiConfig();
+      final apiCfg = cfg['api_config'];
+      if (apiCfg is Map && apiCfg['voice'] is Map) {
+        final p = '${(apiCfg['voice'] as Map)['provider'] ?? ''}'.trim();
+        if (p.isNotEmpty) return p;
+      }
+      final ai = cfg['ai_sales'];
+      if (ai is Map) {
+        final p = '${ai['voice_provider'] ?? ''}'.trim();
+        if (p.isNotEmpty) return p;
+      }
+    } catch (_) {}
+    return 'stub';
+  }
+
+  Future<Map<String, dynamic>> verifyVoiceProvider({String? provider}) async {
+    await SupabaseAuthService.instance.syncSessionFromFirebase();
+    final tid = await activeTenantId;
+    final token = SupabaseAuthService.instance.accessToken;
+    final res = await http.post(
+      Uri.parse(SupabaseConfig.functionUrl('bos-voice-verify')),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+        'apikey': SupabaseConfig.anonKey,
+      },
+      body: jsonEncode({
+        'tenant_id': tid,
+        if (provider != null) 'provider': provider,
+      }),
+    );
+    final body = jsonDecode(res.body);
+    if (res.statusCode >= 400) throw Exception(body['error'] ?? res.body);
+    return Map<String, dynamic>.from(body as Map);
+  }
+
+  /// Place outbound call via Edge (`bos-voice-dial`) — live when tenant secrets set.
   Future<Map<String, dynamic>> dialVoiceCall(String callId) async {
     await SupabaseAuthService.instance.syncSessionFromFirebase();
     final tid = await activeTenantId;

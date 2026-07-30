@@ -922,6 +922,7 @@ class BosVoiceCall {
     this.outcome,
     this.crmUpdated = false,
     this.scheduledAt,
+    this.provider,
     this.meta,
   });
 
@@ -937,12 +938,20 @@ class BosVoiceCall {
   final String? outcome;
   final bool crmUpdated;
   final DateTime? scheduledAt;
+  final String? provider;
   final Map<String, dynamic>? meta;
   final DateTime createdAt;
 
   bool get isOpen => status == 'queued' || status == 'ringing' || status == 'in_progress';
   String? get aiSummary => meta?['summary']?.toString();
   String? get nextAction => meta?['next_action']?.toString();
+  String get voiceProviderLabel =>
+      (meta?['voice_provider'] ?? provider ?? 'stub').toString();
+  bool get dialSim => meta?['dial_sim'] == true;
+  String? get sttProvider => meta?['stt_provider']?.toString();
+  String? get recordingUrl =>
+      (meta?['recording_url'] ?? meta?['audio_url'])?.toString();
+  String? get providerCallId => meta?['provider_call_id']?.toString();
 
   factory BosVoiceCall.fromMap(Map<String, dynamic> map) {
     final meta = map['meta'] is Map ? Map<String, dynamic>.from(map['meta'] as Map) : null;
@@ -964,6 +973,7 @@ class BosVoiceCall {
       outcome: map['outcome'] as String?,
       crmUpdated: map['crm_updated'] as bool? ?? false,
       scheduledAt: scheduled,
+      provider: map['provider'] as String?,
       meta: meta,
       createdAt: DateTime.parse(map['created_at'] as String),
     );
