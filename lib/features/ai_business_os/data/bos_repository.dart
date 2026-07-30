@@ -851,8 +851,9 @@ class BosRepository extends SupabaseRepositoryBase {
         .isFilter('deleted_at', null);
     final calls = await client
         .from('bos_voice_calls')
-        .select('id,status')
-        .eq('tenant_id', tid);
+        .select('id,status,meta,duration_sec,direction')
+        .eq('tenant_id', tid)
+        .isFilter('deleted_at', null);
     final recipients = await client
         .from('bos_campaign_recipients')
         .select('id,status,delivery_status')
@@ -2512,6 +2513,71 @@ ${e.answers}
     return 'stub';
   }
 
+  /// Status callback URL for Twilio / Exotel console (copy into provider webhook).
+  Future<String> voiceWebhookUrl({required String provider, bool inbound = false}) async {
+    final tid = await activeTenantId;
+    final base = SupabaseConfig.functionUrl('bos-voice-webhook');
+    final q = StringBuffer('$base?tenant_id=$tid&provider=$provider');
+    if (inbound) q.write('&inbound=1');
+    return q.toString();
+  }
+
+  Future<Map<String, dynamic>> previewVoiceTts({
+    required String text,
+    String language = 'hi-IN',
+  }) async {
+    await SupabaseAuthService.instance.syncSessionFromFirebase();
+    final tid = await activeTenantId;
+    final token = SupabaseAuthService.instance.accessToken;
+    final res = await http.post(
+      Uri.parse(SupabaseConfig.functionUrl('bos-voice-tts')),
+      headers: {
+        'Content-Type': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+        'apikey': SupabaseConfig.anonKey,
+      },
+      body: jsonEncode({
+        'tenant_id': tid,
+        'text': text,
+        'language': language,
+      }),
+    );
+    final body = jsonDecode(res.body);
+    if (res.statusCode >= 400) throw Exception(body['error'] ?? res.body);
+    return Map<String, dynamic>.from(body as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> listVoiceEvents({int limit = 40}) async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) return [];
+    final tid = await activeTenantId;
+    try {
+      final res = await client
+          .from('bos_voice_events')
+          .select()
+          .eq('tenant_id', tid)
+          .order('created_at', ascending: false)
+          .limit(limit);
+      return (res as List).map((r) => SupabaseRepositoryBase.rowToMap(r)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> softDeleteVoiceCall(String callId) async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) return;
+    await client.from('bos_voice_calls').update({
+      'deleted_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
+    }).eq('id', callId);
+    await writeAuditLog(
+      action: 'voice.soft_delete',
+      entityType: 'bos_voice_calls',
+      entityId: callId,
+    );
+  }
+
   Future<Map<String, dynamic>> verifyVoiceProvider({String? provider}) async {
     await SupabaseAuthService.instance.syncSessionFromFirebase();
     final tid = await activeTenantId;
@@ -2678,6 +2744,34 @@ ${e.answers}
         .from('bos_campaign_recipients')
         .select('delivery_status')
         .eq('tenant_id', tid);
+    final voiceRows = await client
+        .from('bos_voice_calls')
+        .select('status,meta,duration_sec,direction')
+        .eq('tenant_id', tid)
+        .isFilter('deleted_at', null);
+    var voiceLive = 0;
+    var voiceStub = 0;
+    var voiceSttLive = 0;
+    var voiceInbound = 0;
+    var voiceDurationSum = 0;
+    var voiceDurationN = 0;
+    final voiceList = voiceRows as List;
+    for (final r in voiceList) {
+      final meta = r['meta'] is Map ? Map<String, dynamic>.from(r['meta'] as Map) : <String, dynamic>{};
+      final sim = meta['dial_sim'] == true;
+      if (sim) {
+        voiceStub++;
+      } else {
+        voiceLive++;
+      }
+      if (meta['stt_provider'] != null && meta['stt_sim'] != true) voiceSttLive++;
+      if (r['direction'] == 'inbound' || meta['inbound'] == true) voiceInbound++;
+      final d = (r['duration_sec'] as num?)?.toInt();
+      if (d != null && d > 0) {
+        voiceDurationSum += d;
+        voiceDurationN++;
+      }
+    }
     final ticketRows = tickets as List;
     final openTickets = ticketRows.where((t) => t['status'] == 'open' || t['status'] == 'in_progress').length;
     final projectRows = projects as List;
@@ -2722,6 +2816,13 @@ ${e.answers}
       'quotation_value_paise': quoteValue,
       'usage_30d': usageTotals,
       'delivery_breakdown': deliveryBreakdown,
+      'voice_total': voiceList.length,
+      'voice_live': voiceLive,
+      'voice_stub': voiceStub,
+      'voice_stt_live': voiceSttLive,
+      'voice_inbound': voiceInbound,
+      'voice_avg_duration_sec':
+          voiceDurationN == 0 ? 0 : (voiceDurationSum / voiceDurationN).round(),
       if (platform != null) 'platform': platform,
     };
   }
@@ -2812,14 +2913,23 @@ ${e.answers}
     );
   }
 
-  Future<List<BosVoiceCall>> listVoiceCalls({String? status, bool dueOnly = false}) async {
+  Future<List<BosVoiceCall>> listVoiceCalls({
+    String? status,
+    bool dueOnly = false,
+    bool hideStub = false,
+    bool includeDeleted = false,
+  }) async {
     final client = await SupabaseRepositoryBase.clientWithAuth();
     if (client == null) return [];
     final tid = await activeTenantId;
     var qb = client.from('bos_voice_calls').select().eq('tenant_id', tid);
+    if (!includeDeleted) qb = qb.isFilter('deleted_at', null);
     if (status != null) qb = qb.eq('status', status);
     final res = await qb.order('created_at', ascending: false);
     var list = (res as List).map((r) => BosVoiceCall.fromMap(SupabaseRepositoryBase.rowToMap(r))).toList();
+    if (hideStub) {
+      list = list.where((c) => !c.dialSim).toList();
+    }
     if (dueOnly) {
       final now = DateTime.now();
       list = list

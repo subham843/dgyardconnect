@@ -7,6 +7,8 @@ import '../../../features/admin/widgets/admin_embedded_scaffold.dart';
 import '../data/bos_repository.dart';
 import '../domain/bos_models.dart';
 import '../domain/bos_permissions.dart';
+import 'bos_audio_play_stub.dart'
+    if (dart.library.html) 'bos_audio_play_web.dart';
 
 class AdminAiOsSettingsScreen extends StatefulWidget {
   const AdminAiOsSettingsScreen({super.key, this.embedded = false});
@@ -42,6 +44,12 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   bool get _isSuperadmin => SupabaseAuthService.instance.currentJwtIsSuperadmin;
   bool _testingDial = false;
   bool _verifyingKeys = false;
+  bool _previewingTts = false;
+  String? _webhookTwilio;
+  String? _webhookExotel;
+  final _ttsPreviewCtrl = TextEditingController(
+    text: 'Namaste, DG.YARD se call aa raha hai. Aapke enquiry ke baare mein baat karni thi.',
+  );
 
   final _nameCtrl = TextEditingController();
   final _primaryCtrl = TextEditingController();
@@ -106,6 +114,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     _workStartCtrl.dispose();
     _workEndCtrl.dispose();
     _aiAgentNameCtrl.dispose();
+    _ttsPreviewCtrl.dispose();
     super.dispose();
   }
 
@@ -229,7 +238,60 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           }
         }
       } catch (_) { /* optional */ }
+      try {
+        _webhookTwilio = await _repo.voiceWebhookUrl(provider: 'twilio');
+        _webhookExotel = await _repo.voiceWebhookUrl(provider: 'exotel');
+      } catch (_) {}
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _copyWebhook(String? url, String label) async {
+    if (url == null || url.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$label webhook URL copied')),
+    );
+  }
+
+  Future<void> _previewTts() async {
+    if (!BosPermissions.canManageSettings && !BosPermissions.canEdit) {
+      _denied();
+      return;
+    }
+    final text = _ttsPreviewCtrl.text.trim();
+    if (text.isEmpty) return;
+    setState(() => _previewingTts = true);
+    try {
+      final r = await _repo.previewVoiceTts(
+        text: text,
+        language: _aiLanguage == 'en' ? 'en-IN' : 'hi-IN',
+      );
+      if (!mounted) return;
+      if (r['sim'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${r['note'] ?? 'Stub TTS — set Sarvam API key'}')),
+        );
+        return;
+      }
+      final b64 = r['audio_base64']?.toString();
+      if (b64 == null || b64.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No audio returned from Sarvam')),
+        );
+        return;
+      }
+      playBase64Audio(b64, contentType: '${r['content_type'] ?? 'audio/wav'}');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Playing Sarvam TTS preview…')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _previewingTts = false);
     }
   }
 
@@ -995,9 +1057,17 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 TextField(
                   controller: _sarvamKeyCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Sarvam API key (STT on call complete)',
+                    labelText: 'Sarvam API key (STT + TTS preview)',
                   ),
                   obscureText: true,
+                ),
+                TextField(
+                  controller: _ttsPreviewCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'TTS preview script (Hinglish/Hindi)',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 8),
                 TextField(
@@ -1011,6 +1081,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
+                  runSpacing: 8,
                   children: [
                     FilledButton(
                       onPressed: (BosPermissions.canManageSettings || BosPermissions.canEdit)
@@ -1048,8 +1119,50 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                           : const Icon(Icons.phone_forwarded),
                       label: Text(_testingDial ? 'Dialing…' : 'Test dial'),
                     ),
+                    OutlinedButton.icon(
+                      onPressed: _previewingTts ||
+                              !(BosPermissions.canManageSettings || BosPermissions.canEdit)
+                          ? null
+                          : _previewTts,
+                      icon: _previewingTts
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.record_voice_over),
+                      label: Text(_previewingTts ? 'TTS…' : 'Preview TTS'),
+                    ),
                   ],
                 ),
+                const SizedBox(height: 16),
+                const Text('Voice webhooks (paste in provider console)', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  'Status + recording callbacks → bos-voice-webhook (auto STT + inbound lead).',
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                ),
+                if (_webhookTwilio != null)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Twilio status/recording URL'),
+                    subtitle: Text(_webhookTwilio!, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.copy),
+                      onPressed: () => _copyWebhook(_webhookTwilio, 'Twilio'),
+                    ),
+                  ),
+                if (_webhookExotel != null)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Exotel status/recording URL'),
+                    subtitle: Text(_webhookExotel!, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.copy),
+                      onPressed: () => _copyWebhook(_webhookExotel, 'Exotel'),
+                    ),
+                  ),
                 const SizedBox(height: 24),
                 const Text('AI Sales Agent', style: TextStyle(fontWeight: FontWeight.bold)),
                 TextField(

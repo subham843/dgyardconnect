@@ -924,6 +924,7 @@ class BosVoiceCall {
     this.scheduledAt,
     this.provider,
     this.meta,
+    this.deletedAt,
   });
 
   final String id;
@@ -941,14 +942,17 @@ class BosVoiceCall {
   final String? provider;
   final Map<String, dynamic>? meta;
   final DateTime createdAt;
+  final DateTime? deletedAt;
 
   bool get isOpen => status == 'queued' || status == 'ringing' || status == 'in_progress';
+  bool get isInbound => direction == 'inbound' || meta?['inbound'] == true;
   String? get aiSummary => meta?['summary']?.toString();
   String? get nextAction => meta?['next_action']?.toString();
   String get voiceProviderLabel =>
       (meta?['voice_provider'] ?? provider ?? 'stub').toString();
   bool get dialSim => meta?['dial_sim'] == true;
   String? get sttProvider => meta?['stt_provider']?.toString();
+  bool get sttLive => sttProvider != null && meta?['stt_sim'] != true;
   String? get recordingUrl =>
       (meta?['recording_url'] ?? meta?['audio_url'])?.toString();
   String? get providerCallId => meta?['provider_call_id']?.toString();
@@ -960,6 +964,9 @@ class BosVoiceCall {
     if (raw is String && raw.isNotEmpty) {
       scheduled = DateTime.tryParse(raw);
     }
+    DateTime? deleted;
+    final del = map['deleted_at'];
+    if (del is String && del.isNotEmpty) deleted = DateTime.tryParse(del);
     return BosVoiceCall(
       id: map['id'] as String,
       tenantId: map['tenant_id'] as String,
@@ -976,6 +983,7 @@ class BosVoiceCall {
       provider: map['provider'] as String?,
       meta: meta,
       createdAt: DateTime.parse(map['created_at'] as String),
+      deletedAt: deleted,
     );
   }
 }

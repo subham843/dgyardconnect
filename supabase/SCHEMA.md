@@ -191,7 +191,7 @@ Identity: Firebase UID + JWT claims `bos_tenant_id`, `bos_role`. Default tenant:
 
 **SaaS multi-tenant control:** Extend `bos_tenants` (gstin, business_type, contact_*, address) + `bos_tenant_settings.api_config` / `api_secrets` (per-company WA/SMS/Email/Voice; Edge `bos-tenant-secrets` + resolve in campaign/reply). `settings.ai_agent` persona. Usage via `bos_usage_events` from AI/voice/campaign Edges. Super Admin Hub platform KPIs (companies, MRR, usage). Trial signup + onboarding collect GST/logo. No parallel `tenants`/`companies`/`api_configurations` tables.
 
-**Voice multi-provider:** Tenant secrets under `api_secrets.voice.<provider>` (`exotel` | `twilio` | `plivo` | `vonage` | `knowlarity` | `myoperator`). Active provider in `api_config.voice.provider`. `bos-voice-dial`: Exotel/Twilio/Plivo/Knowlarity/MyOperator live; Vonage RS256 JWT from tenant private key (`_shared/vonage_jwt.ts`). Settings: masked saved keys + Test dial + **Verify keys** (`bos-voice-verify`). Webhooks `bos-voice-webhook` (Twilio/Exotel recording → `bos-voice-complete` Sarvam STT). Sales/campaigns use tenant voice provider.
+**Voice multi-provider:** Tenant secrets under `api_secrets.voice.<provider>` (`exotel` | `twilio` | `plivo` | `vonage` | `knowlarity` | `myoperator`). Active provider in `api_config.voice.provider`. `bos-voice-dial`: Exotel/Twilio/Plivo/Knowlarity/MyOperator live; Vonage RS256 JWT from tenant private key (`_shared/vonage_jwt.ts`). Settings: masked saved keys + Test dial + **Verify keys** (`bos-voice-verify`) + **webhook URL copy** + **Sarvam TTS preview** (`bos-voice-tts`). Webhooks `bos-voice-webhook` (Twilio/Exotel status/recording → events in `bos_voice_events`; inbound/missed → find/create lead + call row; outbound recording → `bos-voice-complete` Sarvam STT). Soft-delete via `bos_voice_calls.deleted_at`. Sales/campaigns use tenant voice provider. Reports: voice live/stub/STT/inbound/avg duration.
 
 **Phase D CRM + harden + RAG:** Tasks/calendar (`bos_activities.due_at` UI). Configurable deal stages (`bos_deals.stage` text + stage CRUD). Lead merge RPC `bos_merge_leads`. Attachments `bos_attachments` + storage bucket `bos-attachments` (Flutter file upload + URL link). Plan limits `bos_assert_lead_limit` / `bos_assert_user_limit` + Edge `assertUsageLimit` + Billing upgrade CTA. Invite email `bos-invite-email` (sent/stub feedback in UI). KB embeddings on chunks + vector/keyword retrieve in `bos-ai-reply` with **citations** in response/Inbox/public chat. Voice dial `bos-voice-dial` (Exotel/Twilio when tenant secrets set; else stub). Campaign run marks live API failures as `failed`; optional voice auto-dial. Reports: usage 30d + delivery breakdown + Super Admin block.
 
@@ -219,7 +219,8 @@ Identity: Firebase UID + JWT claims `bos_tenant_id`, `bos_role`. Default tenant:
 | `bos_proposals` / `bos_proposal_templates` / `bos_estimates` | Proposals + website/app estimator |
 | `bos_projects` / `bos_project_milestones` / `bos_project_tasks` | Projects |
 | `bos_tickets` / `bos_ticket_comments` | Service & tickets |
-| `bos_voice_calls` | AI Voice (`script`, `outcome`, `scheduled_at`; `bos-voice-dial` Exotel/stub) |
+| `bos_voice_calls` | AI Voice (`script`, `outcome`, `scheduled_at`, `deleted_at`; dial/webhook/STT) |
+| `bos_voice_events` | Webhook/status event log (provider callbacks, inbound/missed) |
 | `bos_marketing_campaigns` | Digital Marketing AI |
 | `bos_marketplace_items` / `bos_marketplace_installs` | SaaS template marketplace |
 

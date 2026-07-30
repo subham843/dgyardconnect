@@ -80,3 +80,6 @@ verify_jwt = false
 
 [functions.bos-voice-verify]
 verify_jwt = false
+
+[functions.bos-voice-tts]
+verify_jwt = false

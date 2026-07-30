@@ -1,7 +1,6 @@
 // Voice provider webhooks (Twilio / Exotel) — status + recording → Sarvam STT via bos-voice-complete.
-// Twilio: application/x-www-form-urlencoded (CallSid, CallStatus, RecordingUrl, …)
-// Exotel: form or JSON (CallSid, Status, RecordingUrl, …)
-// Query: ?tenant_id=…&provider=twilio|exotel  (optional; matched via CallSid when possible)
+// Also creates/links leads for inbound / missed calls when no matching outbound call.
+// Query: ?tenant_id=…&provider=twilio|exotel
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
@@ -47,6 +46,67 @@ function mapStatus(raw: string): string {
   return raw || "in_progress";
 }
 
+function normalizePhone(p: string): string {
+  return p.replace(/\D/g, "");
+}
+
+async function logEvent(
+  db: ReturnType<typeof admin>,
+  opts: {
+    tenantId: string;
+    callId?: string | null;
+    leadId?: string | null;
+    provider?: string;
+    eventType: string;
+    payload: Record<string, unknown>;
+  },
+) {
+  try {
+    await db.from("bos_voice_events").insert({
+      id: crypto.randomUUID(),
+      tenant_id: opts.tenantId,
+      call_id: opts.callId ?? null,
+      lead_id: opts.leadId ?? null,
+      provider: opts.provider ?? null,
+      event_type: opts.eventType,
+      payload: opts.payload,
+    });
+  } catch (_) { /* non-fatal if migration not applied yet */ }
+}
+
+async function findOrCreateLeadByPhone(
+  db: ReturnType<typeof admin>,
+  tenantId: string,
+  phone: string,
+): Promise<string | null> {
+  const digits = normalizePhone(phone);
+  if (digits.length < 8) return null;
+  const tail = digits.slice(-10);
+  const { data: leads } = await db
+    .from("bos_leads")
+    .select("id,phone")
+    .eq("tenant_id", tenantId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const existing = (leads ?? []).find((l) =>
+    normalizePhone(String(l.phone || "")).endsWith(tail)
+  );
+  if (existing) return existing.id as string;
+  const id = crypto.randomUUID();
+  await db.from("bos_leads").insert({
+    id,
+    tenant_id: tenantId,
+    full_name: `Caller ${tail.slice(-4)}`,
+    phone: phone.startsWith("+") ? phone : `+${digits}`,
+    source: "voice_inbound",
+    stage: "new",
+    score: "warm",
+    meta: { inbound_voice: true },
+  });
+  return id;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -59,28 +119,30 @@ Deno.serve(async (req) => {
     const body = await parseBody(req);
 
     const callSid =
-      body.CallSid || body.Sid || body.call_sid || body.CallSid || body.CallID || "";
+      body.CallSid || body.Sid || body.call_sid || body.CallID || "";
     const recordingUrl =
-      body.RecordingUrl ||
-      body.recording_url ||
-      body.RecordingUrl ||
-      body.Digits ||
-      body.CustomField ||
-      "";
-    // Exotel sometimes uses RecordingUrl after status callback
+      body.RecordingUrl || body.recording_url || "";
     const statusRaw =
       body.CallStatus || body.Status || body.call_status || body.DialCallStatus || "";
-    const phone = body.To || body.to || body.CallTo || body.From || "";
+    const directionRaw = (body.Direction || body.direction || "").toLowerCase();
+    const isInbound =
+      directionRaw.includes("inbound") ||
+      body.CallType === "incoming" ||
+      url.searchParams.get("inbound") === "1";
+    // For inbound, From is caller; for outbound Twilio To is customer
+    const customerPhone = isInbound
+      ? (body.From || body.from || body.CallFrom || "")
+      : (body.To || body.to || body.CallTo || body.From || "");
 
     const db = admin();
     let call: Record<string, unknown> | null = null;
 
     if (callSid) {
-      // Match provider_call_id in meta (json contains)
       const { data: rows } = await db
         .from("bos_voice_calls")
         .select("*")
         .eq("tenant_id", tenantHint)
+        .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(80);
       call = (rows ?? []).find((r) => {
@@ -89,10 +151,10 @@ Deno.serve(async (req) => {
       }) ?? null;
 
       if (!call) {
-        // Broader search across tenants if tenant hint wrong
         const { data: all } = await db
           .from("bos_voice_calls")
           .select("*")
+          .is("deleted_at", null)
           .order("created_at", { ascending: false })
           .limit(120);
         call = (all ?? []).find((r) => {
@@ -102,20 +164,80 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (!call && phone) {
-      const digits = phone.replace(/\D/g, "").slice(-10);
+    if (!call && customerPhone && !isInbound) {
+      const digits = normalizePhone(customerPhone).slice(-10);
       const { data: rows } = await db
         .from("bos_voice_calls")
         .select("*")
         .eq("tenant_id", tenantHint)
+        .is("deleted_at", null)
         .in("status", ["queued", "ringing", "in_progress"])
         .order("created_at", { ascending: false })
         .limit(20);
-      call = (rows ?? []).find((r) => String(r.phone || "").replace(/\D/g, "").endsWith(digits)) ??
-        null;
+      call = (rows ?? []).find((r) =>
+        normalizePhone(String(r.phone || "")).endsWith(digits)
+      ) ?? null;
+    }
+
+    // Inbound / missed with no matching outbound → create call + lead
+    if (!call && customerPhone && isInbound) {
+      const leadId = await findOrCreateLeadByPhone(db, tenantHint, customerPhone);
+      const callId = crypto.randomUUID();
+      const mapped = statusRaw ? mapStatus(statusRaw) : "completed";
+      const missed = mappedIsMissed(statusRaw);
+      await db.from("bos_voice_calls").insert({
+        id: callId,
+        tenant_id: tenantHint,
+        lead_id: leadId,
+        phone: customerPhone,
+        direction: "inbound",
+        status: mapped === "failed" ? "failed" : mapped,
+        provider: providerHint || "webhook",
+        meta: {
+          voice_provider: providerHint || "webhook",
+          provider_call_id: callSid || null,
+          inbound: true,
+          missed,
+          webhook_at: new Date().toISOString(),
+          recording_url: recordingUrl || null,
+          audio_url: recordingUrl || null,
+        },
+      });
+      call = {
+        id: callId,
+        tenant_id: tenantHint,
+        lead_id: leadId,
+        phone: customerPhone,
+        meta: {},
+      };
+      await logEvent(db, {
+        tenantId: tenantHint,
+        callId,
+        leadId,
+        provider: providerHint,
+        eventType: missed ? "inbound_missed" : "inbound",
+        payload: { callSid, statusRaw, customerPhone, recordingUrl },
+      });
+      if (leadId) {
+        await db.from("bos_activities").insert({
+          id: crypto.randomUUID(),
+          tenant_id: tenantHint,
+          lead_id: leadId,
+          activity_type: missed ? "voice_missed" : "voice_inbound",
+          subject: missed ? "Missed inbound call" : "Inbound call",
+          body: `Phone ${customerPhone} · ${statusRaw || "received"}`,
+          completed_at: new Date().toISOString(),
+        });
+      }
     }
 
     if (!call) {
+      await logEvent(db, {
+        tenantId: tenantHint,
+        provider: providerHint,
+        eventType: "unmatched",
+        payload: { callSid, statusRaw, customerPhone, body },
+      });
       return new Response(JSON.stringify({ ok: false, error: "call not matched", callSid }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -123,14 +245,15 @@ Deno.serve(async (req) => {
 
     const tenantId = (call.tenant_id as string) || tenantHint;
     const mapped = statusRaw ? mapStatus(statusRaw) : null;
+    const prevMeta = (call.meta ?? {}) as Record<string, unknown>;
     const meta = {
-      ...((call.meta ?? {}) as Record<string, unknown>),
-      provider_call_id: callSid || (call.meta as Record<string, string>)?.provider_call_id,
+      ...prevMeta,
+      provider_call_id: callSid || prevMeta.provider_call_id,
       webhook_provider: providerHint || "unknown",
       webhook_at: new Date().toISOString(),
       webhook_raw_status: statusRaw,
-      recording_url: recordingUrl || (call.meta as Record<string, string>)?.recording_url,
-      audio_url: recordingUrl || (call.meta as Record<string, string>)?.audio_url,
+      recording_url: recordingUrl || prevMeta.recording_url,
+      audio_url: recordingUrl || prevMeta.audio_url,
     };
 
     const patch: Record<string, unknown> = {
@@ -138,16 +261,25 @@ Deno.serve(async (req) => {
       updated_at: new Date().toISOString(),
     };
     if (mapped && mapped !== "completed") patch.status = mapped;
+    if (recordingUrl) patch.recording_url = recordingUrl;
 
     await db.from("bos_voice_calls").update(patch).eq("id", call.id);
 
-    // When recording arrives (or call completed), run STT complete loop
+    await logEvent(db, {
+      tenantId,
+      callId: call.id as string,
+      leadId: (call.lead_id as string) || null,
+      provider: providerHint,
+      eventType: recordingUrl ? "recording" : (mapped || "status"),
+      payload: { callSid, statusRaw, recordingUrl, direction: directionRaw },
+    });
+
     const shouldComplete =
       Boolean(recordingUrl) ||
       mapped === "completed" ||
       (body.RecordingStatus || "").toLowerCase() === "completed";
 
-    if (shouldComplete) {
+    if (shouldComplete && !isInbound) {
       const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
       const completeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/bos-voice-complete`;
       const outcome =
@@ -170,7 +302,6 @@ Deno.serve(async (req) => {
       }).catch(() => {});
     }
 
-    // Twilio expects 200 empty / TwiML
     if (providerHint === "twilio" || body.AccountSid) {
       return new Response("<Response></Response>", {
         headers: { ...corsHeaders, "Content-Type": "text/xml" },
@@ -183,6 +314,7 @@ Deno.serve(async (req) => {
         call_id: call.id,
         recording: Boolean(recordingUrl),
         status: mapped,
+        inbound: isInbound,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
@@ -193,3 +325,7 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+function mappedIsMissed(statusRaw: string): boolean {
+  return /no-answer|no_answer|busy|missed|canceled|cancelled/i.test(statusRaw);
+}

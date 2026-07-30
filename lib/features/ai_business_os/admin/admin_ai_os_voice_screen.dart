@@ -4,6 +4,8 @@ import '../../../features/admin/widgets/admin_embedded_scaffold.dart';
 import '../data/bos_repository.dart';
 import '../domain/bos_models.dart';
 import '../domain/bos_permissions.dart';
+import 'bos_audio_play_stub.dart'
+    if (dart.library.html) 'bos_audio_play_web.dart';
 
 const _outcomes = [
   ('interested', 'Interested'),
@@ -25,8 +27,10 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
   final _repo = BosRepository();
   List<BosVoiceCall> _items = [];
   List<BosLead> _leads = [];
+  List<Map<String, dynamic>> _events = [];
   bool _loading = true;
   bool _dueOnly = false;
+  bool _hideStub = false;
   String? _statusFilter;
 
   @override
@@ -40,12 +44,15 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
     final items = await _repo.listVoiceCalls(
       status: _statusFilter,
       dueOnly: _dueOnly,
+      hideStub: _hideStub,
     );
     final leads = await _repo.listLeads();
+    final events = await _repo.listVoiceEvents(limit: 30);
     if (mounted) {
       setState(() {
         _items = items;
         _leads = leads;
+        _events = events;
         _loading = false;
       });
     }
@@ -57,6 +64,49 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
     );
   }
 
+  Future<void> _previewScript(String script) async {
+    try {
+      final r = await _repo.previewVoiceTts(text: script);
+      if (!mounted) return;
+      if (r['sim'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${r['note'] ?? 'Set Sarvam key for live TTS'}')),
+        );
+        return;
+      }
+      final b64 = r['audio_base64']?.toString();
+      if (b64 == null || b64.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No TTS audio')),
+        );
+        return;
+      }
+      playBase64Audio(b64, contentType: '${r['content_type'] ?? 'audio/wav'}');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  Future<void> _softDelete(BosVoiceCall call) async {
+    if (!BosPermissions.canEdit) return _denied();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Hide call?'),
+        content: Text('Soft-delete ${call.phone ?? call.id} from the list.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Hide')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _repo.softDeleteVoiceCall(call.id);
+    _load();
+  }
+
   Future<void> _queue() async {
     if (!BosPermissions.canCreate) return _denied();
     final phone = TextEditingController();
@@ -65,6 +115,7 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
     );
     String? leadId;
     var generating = false;
+    var previewing = false;
 
     final ok = await showDialog<bool>(
       context: context,
@@ -95,30 +146,51 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                     });
                   },
                 ),
-                if (leadId != null)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: generating
-                          ? null
-                          : () async {
-                              setS(() => generating = true);
-                              try {
-                                script.text = await _repo.generateVoiceScript(leadId!);
-                              } catch (e) {
-                                if (ctx.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 8,
+                    children: [
+                      if (leadId != null)
+                        TextButton.icon(
+                          onPressed: generating
+                              ? null
+                              : () async {
+                                  setS(() => generating = true);
+                                  try {
+                                    script.text = await _repo.generateVoiceScript(leadId!);
+                                  } catch (e) {
+                                    if (ctx.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                                    }
+                                  } finally {
+                                    setS(() => generating = false);
+                                  }
+                                },
+                          icon: generating
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.auto_awesome),
+                          label: const Text('AI script'),
+                        ),
+                      TextButton.icon(
+                        onPressed: previewing || script.text.trim().isEmpty
+                            ? null
+                            : () async {
+                                setS(() => previewing = true);
+                                try {
+                                  await _previewScript(script.text.trim());
+                                } finally {
+                                  setS(() => previewing = false);
                                 }
-                              } finally {
-                                setS(() => generating = false);
-                              }
-                            },
-                      icon: generating
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.auto_awesome),
-                      label: const Text('AI script'),
-                    ),
+                              },
+                        icon: previewing
+                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.record_voice_over),
+                        label: const Text('Preview TTS'),
+                      ),
+                    ],
                   ),
+                ),
               ],
             ),
           ),
@@ -221,12 +293,22 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
               children: [
                 Text(
                   '${call.voiceProviderLabel}${call.dialSim ? ' · stub' : ' · live'}'
-                  '${call.sttProvider != null ? ' · STT ${call.sttProvider}' : ''}',
+                  '${call.sttProvider != null ? ' · STT ${call.sttProvider}' : ''}'
+                  '${call.isInbound ? ' · inbound' : ''}',
                   style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
                 ),
                 if (call.script != null && call.script!.isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  const Text('Script', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Row(
+                    children: [
+                      const Text('Script', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () => _previewScript(call.script!),
+                        child: const Text('Preview TTS'),
+                      ),
+                    ],
+                  ),
                   Text(call.script!, style: const TextStyle(fontSize: 13)),
                   const SizedBox(height: 12),
                 ],
@@ -312,7 +394,10 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 FilterChip(
                   label: const Text('Due / queued'),
@@ -322,7 +407,14 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                     _load();
                   },
                 ),
-                const SizedBox(width: 12),
+                FilterChip(
+                  label: const Text('Hide stub'),
+                  selected: _hideStub,
+                  onSelected: (v) {
+                    setState(() => _hideStub = v);
+                    _load();
+                  },
+                ),
                 DropdownButton<String?>(
                   value: _statusFilter,
                   hint: const Text('Status'),
@@ -340,6 +432,32 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
               ],
             ),
           ),
+          if (_events.isNotEmpty)
+            SizedBox(
+              height: 88,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: _events.length.clamp(0, 12),
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) {
+                  final e = _events[i];
+                  final t = '${e['event_type'] ?? 'event'}';
+                  final p = '${e['provider'] ?? ''}';
+                  final at = e['created_at']?.toString();
+                  final short = at != null && at.length >= 16 ? at.substring(11, 16) : '';
+                  return Chip(
+                    avatar: Icon(
+                      t.contains('inbound') || t.contains('missed')
+                          ? Icons.call_received
+                          : Icons.webhook,
+                      size: 16,
+                    ),
+                    label: Text('$t${p.isNotEmpty ? ' · $p' : ''}${' · $short'}'),
+                  );
+                },
+              ),
+            ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
@@ -361,33 +479,44 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                   : null;
                               return ListTile(
                                 leading: Icon(
-                                  c.dialSim ? Icons.phone_paused : Icons.phone_in_talk,
-                                  color: c.dialSim ? Colors.orange : Colors.teal,
+                                  c.isInbound
+                                      ? Icons.call_received
+                                      : (c.dialSim ? Icons.phone_paused : Icons.phone_in_talk),
+                                  color: c.isInbound
+                                      ? Colors.indigo
+                                      : (c.dialSim ? Colors.orange : Colors.teal),
                                 ),
                                 title: Text(c.phone ?? 'Unknown'),
                                 subtitle: Text(
                                   '${c.status}'
+                                  '${c.isInbound ? ' · inbound' : ''}'
                                   ' · ${c.voiceProviderLabel}${c.dialSim ? ' (stub)' : ' (live)'}'
                                   '${c.sttProvider != null ? ' · ${c.sttProvider}' : ''}'
+                                  '${c.durationSec != null ? ' · ${c.durationSec}s' : ''}'
                                   '${c.outcome != null ? ' · ${c.outcome}' : ''}'
                                   '${sched != null ? ' · due $sched' : ''}',
                                 ),
-                                trailing: c.isOpen
-                                    ? Wrap(
-                                        spacing: 6,
-                                        children: [
-                                          if (c.status == 'queued' || c.status == 'ringing')
-                                            OutlinedButton(
-                                              onPressed: () => _dial(c),
-                                              child: Text(c.status == 'queued' ? 'Dial' : 'Re-dial'),
-                                            ),
-                                          FilledButton.tonal(
-                                            onPressed: () => _complete(c),
-                                            child: const Text('Complete'),
-                                          ),
-                                        ],
-                                      )
-                                    : null,
+                                trailing: Wrap(
+                                  spacing: 6,
+                                  children: [
+                                    if (c.isOpen) ...[
+                                      if (c.status == 'queued' || c.status == 'ringing')
+                                        OutlinedButton(
+                                          onPressed: () => _dial(c),
+                                          child: Text(c.status == 'queued' ? 'Dial' : 'Re-dial'),
+                                        ),
+                                      FilledButton.tonal(
+                                        onPressed: () => _complete(c),
+                                        child: const Text('Complete'),
+                                      ),
+                                    ],
+                                    IconButton(
+                                      tooltip: 'Hide',
+                                      onPressed: () => _softDelete(c),
+                                      icon: const Icon(Icons.visibility_off_outlined, size: 20),
+                                    ),
+                                  ],
+                                ),
                                 onTap: () => showDialog<void>(
                                   context: context,
                                   builder: (ctx) => AlertDialog(
@@ -399,7 +528,8 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                           Text('Status: ${c.status}'),
                                           Text(
                                             'Provider: ${c.voiceProviderLabel}'
-                                            '${c.dialSim ? ' · stub dial' : ' · live'}',
+                                            '${c.dialSim ? ' · stub dial' : ' · live'}'
+                                            '${c.isInbound ? ' · inbound' : ''}',
                                           ),
                                           if (c.sttProvider != null) Text('STT: ${c.sttProvider}'),
                                           if (c.providerCallId != null)
@@ -427,6 +557,14 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                       ),
                                     ),
                                     actions: [
+                                      if (c.script != null && c.script!.isNotEmpty)
+                                        TextButton(
+                                          onPressed: () {
+                                            Navigator.pop(ctx);
+                                            _previewScript(c.script!);
+                                          },
+                                          child: const Text('Preview TTS'),
+                                        ),
                                       if (c.isOpen)
                                         TextButton(
                                           onPressed: () {
