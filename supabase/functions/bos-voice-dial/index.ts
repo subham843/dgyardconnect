@@ -137,6 +137,8 @@ async function dialTwilio(
   comm: TenantCommConfig,
   phone: string,
   script: string,
+  tenantId: string,
+  callId: string,
 ): Promise<DialResult> {
   const accountSid = String(comm.voiceAccountSid || comm.twilioSid || "").trim();
   const token = String(comm.voiceApiToken || comm.voiceApiKey || "").trim();
@@ -168,15 +170,28 @@ async function dialTwilio(
       error: `Invalid From number "${comm.voiceNumber}" — Twilio Caller ID must be E.164 (+91…)`,
     };
   }
+  const base = Deno.env.get("SUPABASE_URL") || "";
+  const twimlUrl =
+    `${base}/functions/v1/bos-voice-twiml?tenant_id=${encodeURIComponent(tenantId)}` +
+    `&call_id=${encodeURIComponent(callId)}`;
+  const statusUrl =
+    `${base}/functions/v1/bos-voice-webhook?tenant_id=${encodeURIComponent(tenantId)}&provider=twilio`;
+
   const url =
     `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Calls.json`;
   const form = new URLSearchParams();
   form.set("To", to);
   form.set("From", from);
-  form.set(
-    "Twiml",
-    `<Response><Say>${escapeXml(script.slice(0, 500))}</Say></Response>`,
-  );
+  // Conversational: Sarvam TTS Play + Gather (not Twilio <Say>)
+  form.set("Url", twimlUrl);
+  form.set("Method", "POST");
+  form.set("StatusCallback", statusUrl);
+  form.set("StatusCallbackEvent", "initiated ringing answered completed");
+  form.set("StatusCallbackMethod", "POST");
+  form.set("Record", "true");
+  form.set("RecordingStatusCallback", statusUrl);
+  form.set("RecordingStatusCallbackMethod", "POST");
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -191,7 +206,7 @@ async function dialTwilio(
       ok: false,
       sim: false,
       status: "failed",
-      meta: { twilio: payload, http_status: res.status, to, from },
+      meta: { twilio: payload, http_status: res.status, to, from, twiml_url: twimlUrl },
       error: twilioErrorMessage(payload, res.status),
     };
   }
@@ -199,7 +214,15 @@ async function dialTwilio(
     ok: true,
     sim: false,
     status: "in_progress",
-    meta: { twilio: payload, http_status: res.status, to, from },
+    meta: {
+      twilio: payload,
+      http_status: res.status,
+      to,
+      from,
+      twiml_url: twimlUrl,
+      conversational: true,
+      script_preview: script.slice(0, 80),
+    },
     providerCallId: String((payload as Record<string, string>)?.sid || "") || undefined,
   };
 }
@@ -539,8 +562,9 @@ Deno.serve(async (req) => {
     };
 
     if (provider === "exotel") result = await dialExotel(comm, phone);
-    else if (provider === "twilio") result = await dialTwilio(comm, phone, script);
-    else if (provider === "plivo") result = await dialPlivo(comm, phone, script);
+    else if (provider === "twilio") {
+      result = await dialTwilio(comm, phone, script, tenantId, callId);
+    } else if (provider === "plivo") result = await dialPlivo(comm, phone, script);
     else if (provider === "vonage" || provider === "nexmo") {
       result = await dialVonage(comm, phone, script);
     } else if (provider === "knowlarity") result = await dialKnowlarity(comm, phone);

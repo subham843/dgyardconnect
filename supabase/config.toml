@@ -83,3 +83,6 @@ verify_jwt = false
 
 [functions.bos-voice-tts]
 verify_jwt = false
+
+[functions.bos-voice-twiml]
+verify_jwt = false
