@@ -7,6 +7,7 @@ import {
   detectLanguageCode,
   generateVoiceReply,
   normalizeModel,
+  resolveSarvamApiKey,
   resolveSpeaker,
   sarvamTtsToPublicUrl,
 } from "../_shared/sarvam_voice.ts";
@@ -72,11 +73,28 @@ async function parseBody(req: Request): Promise<Record<string, string>> {
   return out;
 }
 
+function speakOrPlay(audioUrl: string | null, text: string): string {
+  if (audioUrl) return `<Play>${xml(audioUrl)}</Play>`;
+  return `<Say language="hi-IN">${xml(text)}</Say>`;
+}
+
+function gatherBlock(gatherLang: string, actionUrl: string, promptIfSilent: string): string {
+  return (
+    `<Gather input="speech" language="${gatherLang}" speechTimeout="auto" timeout="8" action="${xml(actionUrl)}" method="POST">` +
+    `<Pause length="1"/>` +
+    `</Gather>` +
+    `<Say language="${gatherLang}">${xml(promptIfSilent)}</Say>` +
+    `<Redirect method="POST">${xml(actionUrl)}</Redirect>`
+  );
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  let callIdForErr = "";
+  let tenantIdForErr = DEFAULT_TENANT;
   try {
     const url = new URL(req.url);
     const form = req.method === "POST" ? await parseBody(req) : {};
@@ -88,14 +106,21 @@ Deno.serve(async (req) => {
       url.searchParams.get("call_id") ||
       form.call_id ||
       "";
+    tenantIdForErr = tenantId;
+    callIdForErr = callId;
     if (!callId) {
-      return twimlResponse(`<Say>Missing call id. Goodbye.</Say><Hangup/>`);
+      return twimlResponse(`<Say language="hi-IN">Call setup incomplete. Goodbye.</Say><Hangup/>`);
     }
 
     const db = admin();
-    const { data: call } = await db.from("bos_voice_calls").select("*").eq("id", callId).maybeSingle();
+    const { data: call, error: callErr } = await db
+      .from("bos_voice_calls")
+      .select("*")
+      .eq("id", callId)
+      .maybeSingle();
+    if (callErr) throw new Error(`call_lookup: ${callErr.message}`);
     if (!call) {
-      return twimlResponse(`<Say>Call not found. Goodbye.</Say><Hangup/>`);
+      return twimlResponse(`<Say language="hi-IN">Call not found. Goodbye.</Say><Hangup/>`);
     }
 
     const { data: settingsRow } = await db
@@ -103,7 +128,7 @@ Deno.serve(async (req) => {
       .select("api_secrets, api_config, settings")
       .eq("tenant_id", tenantId)
       .maybeSingle();
-    const secrets = (settingsRow?.api_secrets ?? {}) as Record<string, Record<string, string>>;
+    const secrets = (settingsRow?.api_secrets ?? {}) as Record<string, unknown>;
     const voiceCfg = ((settingsRow?.api_config as Record<string, unknown>)?.voice ?? {}) as Record<
       string,
       string
@@ -112,10 +137,17 @@ Deno.serve(async (req) => {
       string,
       string
     >;
-    const sarvamKey = secrets.sarvam?.api_key || Deno.env.get("SARVAM_API_KEY") || "";
+    const sarvamKey = resolveSarvamApiKey(
+      secrets,
+      Deno.env.get("SARVAM_API_KEY") || "",
+    );
+    const openaiRaw = secrets.openai;
     const openaiKey =
-      secrets.openai?.api_key ||
-      (typeof secrets.openai === "string" ? secrets.openai : "") ||
+      (openaiRaw && typeof openaiRaw === "object"
+        ? String((openaiRaw as Record<string, unknown>).api_key || "")
+        : typeof openaiRaw === "string"
+        ? openaiRaw
+        : "") ||
       Deno.env.get("OPENAI_API_KEY") ||
       "";
     const model = normalizeModel(voiceCfg.sarvam_model || voiceCfg.tts_model);
@@ -141,6 +173,10 @@ Deno.serve(async (req) => {
         "hi-IN",
     );
     let nextTurn = turn;
+    const gatherLang = language.startsWith("en") ? "en-IN" : "hi-IN";
+    const silentPrompt = language.startsWith("hi")
+      ? "Main aapki baat sun nahi paya. Kripya dobara boliye."
+      : "I could not hear you. Please speak again.";
 
     if (speech.trim()) {
       language = detectLanguageCode(speech, language);
@@ -183,14 +219,12 @@ Deno.serve(async (req) => {
             last_sarvam_play: audio.url,
             sarvam_speaker: speaker,
             conversational: true,
+            sarvam_tts_error: audio.error || null,
           },
           updated_at: new Date().toISOString(),
         }).eq("id", callId);
 
-        if (audio.url) {
-          return twimlResponse(`<Play>${xml(audio.url)}</Play><Hangup/>`);
-        }
-        return twimlResponse(`<Say>${xml(speakText)}</Say><Hangup/>`);
+        return twimlResponse(`${speakOrPlay(audio.url, speakText)}<Hangup/>`);
       }
 
       speakText = await generateVoiceReply({
@@ -229,23 +263,15 @@ Deno.serve(async (req) => {
           last_customer_speech: speech,
           sarvam_speaker: speaker,
           conversational: true,
-          sarvam_tts_error: audio.error,
+          sarvam_tts_error: audio.error || null,
+          has_sarvam_key: Boolean(sarvamKey),
         },
         updated_at: new Date().toISOString(),
       }).eq("id", callId);
 
-      const gatherLang = language.startsWith("en") ? "en-IN" : "hi-IN";
-      if (audio.url) {
-        return twimlResponse(
-          `<Play>${xml(audio.url)}</Play>` +
-            `<Gather input="speech" language="${gatherLang}" speechTimeout="auto" timeout="6" action="${xml(actionUrl)}" method="POST"/>` +
-            `<Redirect method="POST">${xml(actionUrl)}</Redirect>`,
-        );
-      }
       return twimlResponse(
-        `<Say>${xml(speakText)}</Say>` +
-          `<Gather input="speech" language="${gatherLang}" speechTimeout="auto" timeout="6" action="${xml(actionUrl)}" method="POST"/>` +
-          `<Redirect method="POST">${xml(actionUrl)}</Redirect>`,
+        speakOrPlay(audio.url, speakText) +
+          gatherBlock(language.startsWith("en") ? "en-IN" : "hi-IN", actionUrl, silentPrompt),
       );
     }
 
@@ -277,7 +303,8 @@ Deno.serve(async (req) => {
         sarvam_speaker: speaker,
         sarvam_model: model,
         opening_play: audio.url,
-        sarvam_tts_error: audio.error,
+        sarvam_tts_error: audio.error || null,
+        has_sarvam_key: Boolean(sarvamKey),
         conversation: [
           ...(Array.isArray(prevMeta.conversation) ? prevMeta.conversation as unknown[] : []),
           { role: "agent", text: speakText, at: new Date().toISOString() },
@@ -286,37 +313,52 @@ Deno.serve(async (req) => {
       updated_at: new Date().toISOString(),
     }).eq("id", callId);
 
-    await db.from("bos_voice_events").insert({
-      id: crypto.randomUUID(),
-      tenant_id: tenantId,
-      call_id: callId,
-      lead_id: call.lead_id || null,
-      provider: "twilio",
-      event_type: audio.url ? "sarvam_play_opening" : "sarvam_play_fallback_say",
-      payload: { speaker, model, language, error: audio.error || null },
-    }).catch(() => {});
-
-    const gatherLang = language.startsWith("en") ? "en-IN" : "hi-IN";
-    if (audio.url) {
-      return twimlResponse(
-        `<Play>${xml(audio.url)}</Play>` +
-          `<Gather input="speech" language="${gatherLang}" speechTimeout="auto" timeout="6" action="${xml(actionUrl)}" method="POST"/>` +
-          `<Say>${
-            language.startsWith("hi")
-              ? "Main aapki baat sun nahi paya. Kripya dobara boliye."
-              : "I could not hear you. Please speak again."
-          }</Say>` +
-          `<Redirect method="POST">${xml(actionUrl)}</Redirect>`,
-      );
+    // Do NOT use .catch() on Postgrest builders — it is not a Promise and crashes the call.
+    try {
+      await db.from("bos_voice_events").insert({
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        call_id: callId,
+        lead_id: call.lead_id || null,
+        provider: "twilio",
+        event_type: audio.url ? "sarvam_play_opening" : "sarvam_play_fallback_say",
+        payload: {
+          speaker,
+          model,
+          language,
+          error: audio.error || null,
+          has_sarvam_key: Boolean(sarvamKey),
+        },
+      });
+    } catch {
+      /* non-fatal */
     }
 
-    // No Sarvam key / upload failed — still Gather so we listen; Say is last resort
     return twimlResponse(
-      `<Say>${xml(speakText)}</Say>` +
-        `<Gather input="speech" language="${gatherLang}" speechTimeout="auto" timeout="6" action="${xml(actionUrl)}" method="POST"/>` +
-        `<Hangup/>`,
+      speakOrPlay(audio.url, speakText) + gatherBlock(gatherLang, actionUrl, silentPrompt),
     );
   } catch (e) {
-    return twimlResponse(`<Say>Technical issue. Goodbye from DG.YARD.</Say><Hangup/>`);
+    const err = String(e);
+    console.error("bos-voice-twiml error", err);
+    if (callIdForErr) {
+      try {
+        const db = admin();
+        const { data: call } = await db
+          .from("bos_voice_calls")
+          .select("meta")
+          .eq("id", callIdForErr)
+          .maybeSingle();
+        const prev = (call?.meta ?? {}) as Record<string, unknown>;
+        await db.from("bos_voice_calls").update({
+          meta: { ...prev, twiml_exception: err },
+          updated_at: new Date().toISOString(),
+        }).eq("id", callIdForErr);
+      } catch {
+        /* ignore */
+      }
+    }
+    return twimlResponse(
+      `<Say language="hi-IN">Namaste, DG.YARD se call connect ho raha hai. Kripya thodi der mein dubara try karein.</Say><Hangup/>`,
+    );
   }
 });

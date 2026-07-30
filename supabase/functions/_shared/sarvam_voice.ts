@@ -89,6 +89,17 @@ export function detectLanguageCode(text: string, fallback = "hi-IN"): string {
   return fallback;
 }
 
+function decodeBase64Audio(raw: string): Uint8Array {
+  let s = raw.trim();
+  const comma = s.indexOf(",");
+  if (s.startsWith("data:") && comma >= 0) s = s.slice(comma + 1);
+  s = s.replace(/\s+/g, "");
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export async function sarvamTtsToPublicUrl(
   db: SupabaseClient,
   opts: {
@@ -102,62 +113,88 @@ export async function sarvamTtsToPublicUrl(
     turn: number;
   },
 ): Promise<{ url: string | null; sim: boolean; error?: string }> {
-  const text = opts.text.trim().slice(0, 1200);
-  if (!text) return { url: null, sim: true, error: "empty_text" };
-  if (!opts.apiKey) return { url: null, sim: true, error: "sarvam_key_missing" };
+  try {
+    const text = opts.text.trim().slice(0, 1200);
+    if (!text) return { url: null, sim: true, error: "empty_text" };
+    if (!opts.apiKey) return { url: null, sim: true, error: "sarvam_key_missing" };
 
-  const payload: Record<string, unknown> = {
-    text,
-    target_language_code: opts.language || "hi-IN",
-    speaker: opts.speaker,
-    model: opts.model,
-    pace: 1.0,
-    speech_sample_rate: opts.model === "bulbul:v2" ? 22050 : 24000,
-    enable_preprocessing: true,
-    output_audio_codec: "wav",
-  };
-  if (opts.model === "bulbul:v2") {
-    payload.pitch = 0;
-    payload.loudness = 1;
-    payload.inputs = [text];
-  }
+    const payload: Record<string, unknown> = {
+      text,
+      target_language_code: opts.language || "hi-IN",
+      speaker: opts.speaker,
+      model: opts.model,
+      pace: 1.0,
+      speech_sample_rate: opts.model === "bulbul:v2" ? 22050 : 24000,
+      enable_preprocessing: true,
+      output_audio_codec: "wav",
+    };
+    if (opts.model === "bulbul:v2") {
+      payload.pitch = 0;
+      payload.loudness = 1;
+      payload.inputs = [text];
+    }
 
-  const res = await fetch("https://api.sarvam.ai/text-to-speech", {
-    method: "POST",
-    headers: {
-      "api-subscription-key": opts.apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg =
-      (data as { error?: { message?: string } })?.error?.message ||
-      JSON.stringify(data);
-    return { url: null, sim: false, error: msg };
-  }
-  const b64 =
-    (Array.isArray((data as { audios?: string[] }).audios) &&
-      (data as { audios: string[] }).audios[0]) ||
-    (data as { audio?: string }).audio ||
-    (data as { audio_base64?: string }).audio_base64 ||
-    null;
-  if (!b64 || typeof b64 !== "string") {
-    return { url: null, sim: false, error: "no_audio_in_sarvam_response" };
-  }
+    const res = await fetch("https://api.sarvam.ai/text-to-speech", {
+      method: "POST",
+      headers: {
+        "api-subscription-key": opts.apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg =
+        (data as { error?: { message?: string } })?.error?.message ||
+        (data as { message?: string })?.message ||
+        JSON.stringify(data);
+      return { url: null, sim: false, error: `sarvam_http_${res.status}: ${msg}` };
+    }
+    const b64 =
+      (Array.isArray((data as { audios?: string[] }).audios) &&
+        (data as { audios: string[] }).audios[0]) ||
+      (data as { audio?: string }).audio ||
+      (data as { audio_base64?: string }).audio_base64 ||
+      null;
+    if (!b64 || typeof b64 !== "string") {
+      return { url: null, sim: false, error: "no_audio_in_sarvam_response" };
+    }
 
-  const binary = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  const path = `${opts.tenantId}/${opts.callId}/t${opts.turn}-${Date.now()}.wav`;
-  const up = await db.storage.from("bos-voice-audio").upload(path, binary, {
-    contentType: "audio/wav",
-    upsert: true,
-  });
-  if (up.error) {
-    return { url: null, sim: false, error: `storage_upload: ${up.error.message}` };
+    const binary = decodeBase64Audio(b64);
+    const path = `${opts.tenantId}/${opts.callId}/t${opts.turn}-${Date.now()}.wav`;
+    const up = await db.storage.from("bos-voice-audio").upload(path, binary, {
+      contentType: "audio/wav",
+      upsert: true,
+    });
+    if (up.error) {
+      return { url: null, sim: false, error: `storage_upload: ${up.error.message}` };
+    }
+    const pub = db.storage.from("bos-voice-audio").getPublicUrl(path);
+    return { url: pub.data.publicUrl, sim: false };
+  } catch (e) {
+    return { url: null, sim: false, error: `sarvam_exception: ${String(e)}` };
   }
-  const pub = db.storage.from("bos-voice-audio").getPublicUrl(path);
-  return { url: pub.data.publicUrl, sim: false };
+}
+
+/** Resolve Sarvam key from nested or legacy secret shapes. */
+export function resolveSarvamApiKey(
+  secrets: Record<string, unknown>,
+  envFallback = "",
+): string {
+  const sarvam = secrets.sarvam;
+  if (sarvam && typeof sarvam === "object") {
+    const k = (sarvam as Record<string, unknown>).api_key;
+    if (typeof k === "string" && k.trim()) return k.trim();
+  }
+  if (typeof sarvam === "string" && sarvam.trim()) return sarvam.trim();
+  const voice = secrets.voice;
+  if (voice && typeof voice === "object") {
+    const k =
+      (voice as Record<string, unknown>).sarvam_api_key ||
+      (voice as Record<string, unknown>).sarvam;
+    if (typeof k === "string" && k.trim()) return k.trim();
+  }
+  return (envFallback || "").trim();
 }
 
 export async function generateVoiceReply(opts: {
