@@ -68,7 +68,33 @@ async function queueMissedCallback(
     phone: string;
     provider: string;
   },
-) {
+): Promise<string | null> {
+  const digits = normalizePhone(opts.phone);
+  const tail = digits.slice(-10);
+
+  // DND / opt-out
+  if (opts.leadId) {
+    const { data: lead } = await db
+      .from("bos_leads")
+      .select("meta,phone")
+      .eq("id", opts.leadId)
+      .maybeSingle();
+    const meta = (lead?.meta ?? {}) as Record<string, unknown>;
+    if (meta.do_not_call === true || meta.dnd === true) {
+      return null;
+    }
+  }
+  const { data: optsOut } = await db
+    .from("bos_opt_outs")
+    .select("id,phone,channel")
+    .eq("tenant_id", opts.tenantId)
+    .limit(200);
+  const blocked = (optsOut ?? []).some((o) => {
+    const p = normalizePhone(String(o.phone || ""));
+    return p.endsWith(tail) || (tail.length >= 8 && p.includes(tail));
+  });
+  if (blocked) return null;
+
   const id = crypto.randomUUID();
   const when = new Date(Date.now() + 5 * 60_000).toISOString();
   const script =
@@ -489,14 +515,25 @@ Deno.serve(async (req) => {
             phone: customerPhone,
             provider: providerHint || (isTelnyx ? "telnyx" : "stub"),
           });
-          await logEvent(db, {
-            tenantId: tenantHint,
-            callId: cbId,
-            leadId,
-            provider: providerHint || (isTelnyx ? "telnyx" : undefined),
-            eventType: "missed_callback_queued",
-            payload: { from_inbound: callId, phone: customerPhone },
-          });
+          if (cbId) {
+            await logEvent(db, {
+              tenantId: tenantHint,
+              callId: cbId,
+              leadId,
+              provider: providerHint || (isTelnyx ? "telnyx" : undefined),
+              eventType: "missed_callback_queued",
+              payload: { from_inbound: callId, phone: customerPhone },
+            });
+          } else {
+            await logEvent(db, {
+              tenantId: tenantHint,
+              callId,
+              leadId,
+              provider: providerHint || (isTelnyx ? "telnyx" : undefined),
+              eventType: "missed_callback_skipped",
+              payload: { reason: "dnd_or_opt_out", phone: customerPhone },
+            });
+          }
         } catch (_) { /* non-fatal */ }
       }
     }
@@ -638,17 +675,33 @@ Deno.serve(async (req) => {
           provider: providerHint || (isTelnyx ? "telnyx" : "stub"),
         });
         await db.from("bos_voice_calls").update({
-          meta: { ...meta, callback_queued: true, callback_call_id: cbId },
+          meta: {
+            ...meta,
+            callback_queued: true,
+            callback_call_id: cbId,
+            callback_skipped: cbId == null,
+          },
           updated_at: new Date().toISOString(),
         }).eq("id", call.id);
-        await logEvent(db, {
-          tenantId,
-          callId: cbId,
-          leadId: (call.lead_id as string) || null,
-          provider: providerHint || (isTelnyx ? "telnyx" : undefined),
-          eventType: "missed_callback_queued",
-          payload: { from_inbound: call.id, phone: customerPhone },
-        });
+        if (cbId) {
+          await logEvent(db, {
+            tenantId,
+            callId: cbId,
+            leadId: (call.lead_id as string) || null,
+            provider: providerHint || (isTelnyx ? "telnyx" : undefined),
+            eventType: "missed_callback_queued",
+            payload: { from_inbound: call.id, phone: customerPhone },
+          });
+        } else {
+          await logEvent(db, {
+            tenantId,
+            callId: call.id as string,
+            leadId: (call.lead_id as string) || null,
+            provider: providerHint || (isTelnyx ? "telnyx" : undefined),
+            eventType: "missed_callback_skipped",
+            payload: { reason: "dnd_or_opt_out", phone: customerPhone },
+          });
+        }
       } catch (_) { /* non-fatal */ }
     }
 

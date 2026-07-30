@@ -138,7 +138,9 @@ Widget buildAdminScreen(GoRouterState state) {
     case RouteNames.adminAiOsCrm:
       return const AdminAiOsCrmScreen();
     case RouteNames.adminAiOsLeads:
-      return const AdminAiOsLeadsScreen();
+      return AdminAiOsLeadsScreen(
+        focusLeadId: state.uri.queryParameters['lead'],
+      );
     case RouteNames.adminAiOsCalendar:
       return const AdminAiOsCalendarScreen();
     case RouteNames.adminAiOsWhatsapp:

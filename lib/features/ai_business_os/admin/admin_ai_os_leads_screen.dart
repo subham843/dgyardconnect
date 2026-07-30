@@ -20,9 +20,10 @@ const _boardStages = [
 ];
 
 class AdminAiOsLeadsScreen extends StatefulWidget {
-  const AdminAiOsLeadsScreen({super.key, this.embedded = false});
+  const AdminAiOsLeadsScreen({super.key, this.embedded = false, this.focusLeadId});
 
   final bool embedded;
+  final String? focusLeadId;
 
   @override
   State<AdminAiOsLeadsScreen> createState() => _AdminAiOsLeadsScreenState();
@@ -38,6 +39,7 @@ class _AdminAiOsLeadsScreenState extends State<AdminAiOsLeadsScreen> {
   bool _boardView = true;
   bool _overdueOnly = false;
   bool _aiQueueOnly = false;
+  bool _openedFocusLead = false;
 
   @override
   void initState() {
@@ -78,6 +80,34 @@ class _AdminAiOsLeadsScreenState extends State<AdminAiOsLeadsScreen> {
         _members = members;
         _loading = false;
       });
+      if (!_openedFocusLead &&
+          widget.focusLeadId != null &&
+          widget.focusLeadId!.isNotEmpty) {
+        _openedFocusLead = true;
+        BosLead? match;
+        for (final l in leads) {
+          if (l.id == widget.focusLeadId) {
+            match = l;
+            break;
+          }
+        }
+        if (match == null) {
+          try {
+            final all = await _repo.listLeads();
+            for (final l in all) {
+              if (l.id == widget.focusLeadId) {
+                match = l;
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+        if (match != null && mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showLeadDetail(match!);
+          });
+        }
+      }
     }
   }
 

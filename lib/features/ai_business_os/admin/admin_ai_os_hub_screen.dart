@@ -20,6 +20,7 @@ class _AdminAiOsHubScreenState extends State<AdminAiOsHubScreen> {
   Map<String, dynamic>? _stats;
   Map<String, dynamic>? _platform;
   Map<String, dynamic>? _voiceHealth;
+  bool _runningDueVoice = false;
   bool _loading = true;
   bool _onboardingDone = true;
   bool _isSuperadmin = false;
@@ -232,9 +233,43 @@ class _AdminAiOsHubScreenState extends State<AdminAiOsHubScreen> {
                               'No webhook events yet',
                           ].join(' · '),
                         ),
-                        trailing: TextButton(
-                          onPressed: () => context.go(RouteNames.adminAiOsVoice),
-                          child: const Text('Voice'),
+                        trailing: Wrap(
+                          spacing: 4,
+                          children: [
+                            TextButton(
+                              onPressed: _runningDueVoice
+                                  ? null
+                                  : () async {
+                                      setState(() => _runningDueVoice = true);
+                                      try {
+                                        final r = await _repo.runDueVoiceCallbacks();
+                                        if (!mounted) return;
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Due ${r['due']}: live ${r['dialed']}, stub ${r['stub']}',
+                                            ),
+                                          ),
+                                        );
+                                      } catch (e) {
+                                        if (mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text('$e')),
+                                          );
+                                        }
+                                      } finally {
+                                        if (mounted) {
+                                          setState(() => _runningDueVoice = false);
+                                        }
+                                      }
+                                    },
+                              child: Text(_runningDueVoice ? '…' : 'Run due'),
+                            ),
+                            TextButton(
+                              onPressed: () => context.go(RouteNames.adminAiOsVoice),
+                              child: const Text('Voice'),
+                            ),
+                          ],
                         ),
                         onTap: () => context.go(RouteNames.adminAiOsSettings),
                       ),

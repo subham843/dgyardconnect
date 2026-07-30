@@ -2,3 +2,7 @@
 void playBase64Audio(String base64Audio, {String contentType = 'audio/wav'}) {
   // no-op off web
 }
+
+void playAudioUrl(String url) {
+  // no-op off web
+}

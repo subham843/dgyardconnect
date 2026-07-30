@@ -11,3 +11,11 @@ void playBase64Audio(String base64Audio, {String contentType = 'audio/wav'}) {
   audio.play();
   audio.onEnded.listen((_) => html.Url.revokeObjectUrl(url));
 }
+
+void playAudioUrl(String url) {
+  final audio = html.AudioElement()
+    ..src = url
+    ..autoplay = true
+    ..controls = false;
+  audio.play();
+}

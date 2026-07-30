@@ -2643,6 +2643,82 @@ ${e.answers}
     };
   }
 
+  /// Dial queued voice calls whose scheduled_at is due (missed-call callbacks, follow-ups).
+  Future<Map<String, dynamic>> runDueVoiceCallbacks({int limit = 15}) async {
+    final due = await listVoiceCalls(dueOnly: true);
+    final targets = due.take(limit).toList();
+    var dialed = 0;
+    var stub = 0;
+    var failed = 0;
+    for (final c in targets) {
+      try {
+        final r = await dialVoiceCall(c.id);
+        if (r['sim'] == true) {
+          stub++;
+        } else {
+          dialed++;
+        }
+      } catch (_) {
+        failed++;
+      }
+    }
+    return {
+      'due': targets.length,
+      'dialed': dialed,
+      'stub': stub,
+      'failed': failed,
+    };
+  }
+
+  Future<Map<String, dynamic>> voiceReadinessChecklist() async {
+    final provider = await resolveActiveVoiceProvider();
+    final tid = await activeTenantId;
+    final row = await getTenantSettingsRow(tid);
+    final apiCfg = row?['api_config'];
+    final voiceCfg = apiCfg is Map ? apiCfg['voice'] : null;
+    final number = voiceCfg is Map ? '${voiceCfg['number'] ?? ''}'.trim() : '';
+    final greeting = voiceCfg is Map ? '${voiceCfg['inbound_greeting'] ?? ''}'.trim() : '';
+    var secretsHint = '';
+    var sarvamSet = false;
+    var publicKeySet = false;
+    try {
+      final masked = await getTenantApiConfig(tenantId: tid);
+      final secrets = masked['api_secrets_masked'];
+      if (secrets is Map) {
+        final voice = secrets['voice'];
+        if (voice is Map && voice[provider] is Map) {
+          final nested = Map<String, dynamic>.from(voice[provider] as Map);
+          final parts = <String>[];
+          for (final e in nested.entries) {
+            if (e.value is Map && (e.value as Map)['set'] == true) {
+              parts.add('${e.key}');
+              if (e.key == 'public_key') publicKeySet = true;
+            }
+          }
+          secretsHint = parts.join(', ');
+        }
+        final sarvam = secrets['sarvam'];
+        if (sarvam is Map && sarvam['api_key'] is Map && (sarvam['api_key'] as Map)['set'] == true) {
+          sarvamSet = true;
+        }
+      }
+    } catch (_) {}
+    final webhook = await voiceWebhookUrl(provider: provider == 'stub' ? 'telnyx' : provider);
+    return {
+      'provider': provider,
+      'provider_ok': provider != 'stub',
+      'number_ok': number.isNotEmpty,
+      'number': number,
+      'secrets_ok': secretsHint.isNotEmpty || provider == 'stub',
+      'secrets_hint': secretsHint,
+      'sarvam_ok': sarvamSet,
+      'greeting_ok': greeting.isNotEmpty,
+      'greeting_preview': greeting.isEmpty ? null : (greeting.length > 60 ? '${greeting.substring(0, 60)}…' : greeting),
+      'webhook_url': webhook,
+      'public_key_ok': publicKeySet,
+    };
+  }
+
   Future<void> softDeleteVoiceCall(String callId) async {
     final client = await SupabaseRepositoryBase.clientWithAuth();
     if (client == null) return;

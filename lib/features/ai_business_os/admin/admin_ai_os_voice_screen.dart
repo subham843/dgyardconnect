@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../core/constants/route_names.dart';
 import '../../../features/admin/widgets/admin_embedded_scaffold.dart';
 import '../data/bos_repository.dart';
 import '../domain/bos_models.dart';
@@ -33,11 +35,35 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
   bool _hideStub = false;
   String? _statusFilter;
   String _activeProvider = 'stub';
+  bool _runningDue = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  Future<void> _runDueCallbacks() async {
+    if (!BosPermissions.canEdit && !BosPermissions.canCreate) return _denied();
+    setState(() => _runningDue = true);
+    try {
+      final r = await _repo.runDueVoiceCallbacks();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Due ${r['due']}: live ${r['dialed']}, stub ${r['stub']}, failed ${r['failed']}',
+          ),
+        ),
+      );
+      _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _runningDue = false);
+    }
   }
 
   Future<void> _load() async {
@@ -431,9 +457,18 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                         : 'Live dial when secrets are set in Settings',
                 style: const TextStyle(fontSize: 12),
               ),
-              trailing: TextButton(
-                onPressed: _load,
-                child: const Text('Refresh'),
+              trailing: Wrap(
+                spacing: 4,
+                children: [
+                  TextButton(
+                    onPressed: _runningDue ? null : _runDueCallbacks,
+                    child: Text(_runningDue ? 'Dialing…' : 'Run due'),
+                  ),
+                  TextButton(
+                    onPressed: _load,
+                    child: const Text('Refresh'),
+                  ),
+                ],
               ),
             ),
           ),
@@ -563,6 +598,14 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                 trailing: Wrap(
                                   spacing: 6,
                                   children: [
+                                    if (c.leadId != null)
+                                      IconButton(
+                                        tooltip: 'Open lead',
+                                        onPressed: () => context.go(
+                                          '${RouteNames.adminAiOsLeads}?lead=${c.leadId}',
+                                        ),
+                                        icon: const Icon(Icons.person_search, size: 20),
+                                      ),
                                     if (c.isOpen) ...[
                                       if (c.status == 'queued' || c.status == 'ringing')
                                         OutlinedButton(
@@ -654,6 +697,26 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                       ),
                                     ),
                                     actions: [
+                                      if (c.leadId != null)
+                                        TextButton(
+                                          onPressed: () {
+                                            Navigator.pop(ctx);
+                                            context.go(
+                                              '${RouteNames.adminAiOsLeads}?lead=${c.leadId}',
+                                            );
+                                          },
+                                          child: const Text('Open lead'),
+                                        ),
+                                      if (c.recordingUrl != null && c.recordingUrl!.isNotEmpty)
+                                        TextButton(
+                                          onPressed: () {
+                                            playAudioUrl(c.recordingUrl!);
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(content: Text('Playing recording…')),
+                                            );
+                                          },
+                                          child: const Text('Play recording'),
+                                        ),
                                       if (c.script != null && c.script!.isNotEmpty)
                                         TextButton(
                                           onPressed: () {

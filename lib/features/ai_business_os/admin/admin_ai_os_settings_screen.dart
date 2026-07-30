@@ -56,6 +56,8 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   );
   final _telnyxPublicKeyCtrl = TextEditingController();
   bool _autoCallbackMissed = true;
+  Map<String, dynamic>? _voiceReady;
+  bool _loadingReady = false;
 
   final _nameCtrl = TextEditingController();
   final _primaryCtrl = TextEditingController();
@@ -254,9 +256,19 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
         _webhookTwilio = await _repo.voiceWebhookUrl(provider: 'twilio');
         _webhookExotel = await _repo.voiceWebhookUrl(provider: 'exotel');
         _webhookTelnyx = await _repo.voiceWebhookUrl(provider: 'telnyx');
+        _voiceReady = await _repo.voiceReadinessChecklist();
       } catch (_) {}
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _refreshVoiceReady() async {
+    setState(() => _loadingReady = true);
+    try {
+      final r = await _repo.voiceReadinessChecklist();
+      if (mounted) setState(() => _voiceReady = r);
+    } catch (_) {}
+    if (mounted) setState(() => _loadingReady = false);
   }
 
   Future<void> _copyWebhook(String? url, String label) async {
@@ -607,6 +619,29 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     );
   }
 
+  Widget _readyRow(String label, bool ok, String detail) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            ok ? Icons.check_circle : Icons.radio_button_unchecked,
+            size: 18,
+            color: ok ? Colors.teal : Colors.orange,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$label — $detail',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _inviteLink(String token) {
     final base = Uri.base.origin;
     return '$base${RouteNames.adminAiOsAcceptInvite}?token=$token';
@@ -943,6 +978,56 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 ),
                 const SizedBox(height: 16),
                 const Text('AI Voice providers', style: TextStyle(fontWeight: FontWeight.bold)),
+                if (_voiceReady != null) ...[
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  'Voice readiness',
+                                  style: TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _loadingReady ? null : _refreshVoiceReady,
+                                child: Text(_loadingReady ? '…' : 'Recheck'),
+                              ),
+                            ],
+                          ),
+                          _readyRow('Live provider', _voiceReady!['provider_ok'] == true,
+                              '${_voiceReady!['provider']}'),
+                          _readyRow('From number', _voiceReady!['number_ok'] == true,
+                              '${_voiceReady!['number'] ?? '—'}'),
+                          _readyRow('Provider secrets', _voiceReady!['secrets_ok'] == true,
+                              '${_voiceReady!['secrets_hint'] ?? ( _voiceReady!['provider'] == 'stub' ? 'stub ok' : 'missing')}'),
+                          _readyRow('Sarvam STT/TTS', _voiceReady!['sarvam_ok'] == true,
+                              _voiceReady!['sarvam_ok'] == true ? 'set' : 'optional but recommended'),
+                          _readyRow('Inbound greeting', _voiceReady!['greeting_ok'] == true,
+                              '${_voiceReady!['greeting_preview'] ?? 'empty'}'),
+                          _readyRow(
+                            'Webhook URL ready',
+                            true,
+                            'copy below for ${_voiceReady!['provider']}',
+                          ),
+                          if (_voiceReady!['provider'] == 'telnyx')
+                            _readyRow(
+                              'Telnyx public key',
+                              _voiceReady!['public_key_ok'] == true,
+                              _voiceReady!['public_key_ok'] == true
+                                  ? 'signature verify on'
+                                  : 'optional',
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 Text(
                   'Har provider ke secrets alag save hote hain (voice.exotel / voice.twilio / …). '
                   'Active provider choose karke uske keys paste karo.',
