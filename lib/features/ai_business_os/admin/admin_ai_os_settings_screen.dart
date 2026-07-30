@@ -36,8 +36,11 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   String _aiLanguage = 'hinglish';
   String _aiTone = 'friendly';
   String _waHint = '';
+  String _voiceKeysHint = '';
+  final _voiceHints = <String, String>{};
   String _businessType = 'cctv_integrator';
   bool get _isSuperadmin => SupabaseAuthService.instance.currentJwtIsSuperadmin;
+  bool _testingDial = false;
 
   final _nameCtrl = TextEditingController();
   final _primaryCtrl = TextEditingController();
@@ -59,6 +62,9 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   final _voiceTokenCtrl = TextEditingController();
   final _voiceSidCtrl = TextEditingController();
   final _voiceNumberCtrl = TextEditingController();
+  final _voicePrivateKeyCtrl = TextEditingController();
+  final _voiceTestPhoneCtrl = TextEditingController();
+  final _sarvamKeyCtrl = TextEditingController();
   final _smsSidCtrl = TextEditingController();
   final _workStartCtrl = TextEditingController(text: '9');
   final _workEndCtrl = TextEditingController(text: '20');
@@ -92,6 +98,9 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     _voiceTokenCtrl.dispose();
     _voiceSidCtrl.dispose();
     _voiceNumberCtrl.dispose();
+    _voicePrivateKeyCtrl.dispose();
+    _voiceTestPhoneCtrl.dispose();
+    _sarvamKeyCtrl.dispose();
     _smsSidCtrl.dispose();
     _workStartCtrl.dispose();
     _workEndCtrl.dispose();
@@ -195,9 +204,78 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           } else if (secrets['whatsapp'] is Map && (secrets['whatsapp'] as Map)['set'] == true) {
             _waHint = '${(secrets['whatsapp'] as Map)['hint'] ?? 'set'}';
           }
+          _voiceHints.clear();
+          final voice = secrets['voice'];
+          if (voice is Map) {
+            for (final e in voice.entries) {
+              if (e.value is Map) {
+                final nested = Map<String, dynamic>.from(e.value as Map);
+                final parts = <String>[];
+                for (final f in nested.entries) {
+                  if (f.value is Map && (f.value as Map)['set'] == true) {
+                    parts.add('${f.key}:${(f.value as Map)['hint'] ?? 'set'}');
+                  }
+                }
+                if (parts.isNotEmpty) _voiceHints['${e.key}'] = parts.join(' · ');
+              }
+            }
+            _voiceKeysHint = _voiceHints[_voiceProvider] ??
+                (_voiceHints.isEmpty ? '' : 'saved: ${_voiceHints.keys.join(", ")}');
+          }
+          final sarvam = secrets['sarvam'];
+          if (sarvam is Map && sarvam['api_key'] is Map) {
+            // hint only — field stays empty for replace
+          }
         }
       } catch (_) { /* optional */ }
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _testVoiceDial() async {
+    if (!BosPermissions.canCreate && !BosPermissions.canEdit) {
+      _denied();
+      return;
+    }
+    final phone = _voiceTestPhoneCtrl.text.trim().isNotEmpty
+        ? _voiceTestPhoneCtrl.text.trim()
+        : _phoneCtrl.text.trim();
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter test phone (or tenant contact phone)')),
+      );
+      return;
+    }
+    setState(() => _testingDial = true);
+    try {
+      await _saveProfile();
+      final id = await _repo.createVoiceCall({
+        'phone': phone,
+        'status': 'queued',
+        'direction': 'outbound',
+        'provider': _voiceProvider,
+        'script': 'DG.YARD test dial from Settings.',
+        'scheduled_at': DateTime.now().toIso8601String(),
+        'meta': {'source': 'settings_test_dial'},
+      });
+      final dial = await _repo.dialVoiceCall(id);
+      if (!mounted) return;
+      final sim = dial['sim'] == true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            sim
+                ? 'Test dial stub — check ${_voiceProvider} secrets (sim=true)'
+                : 'Live dial via ${dial['provider']} · status ${dial['status']}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _testingDial = false);
     }
   }
 
@@ -299,15 +377,77 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     }
     if (_voiceKeyCtrl.text.trim().isNotEmpty ||
         _voiceTokenCtrl.text.trim().isNotEmpty ||
-        _voiceSidCtrl.text.trim().isNotEmpty) {
-      secrets['voice'] = {
-        if (_voiceKeyCtrl.text.trim().isNotEmpty) 'api_key': _voiceKeyCtrl.text.trim(),
-        if (_voiceTokenCtrl.text.trim().isNotEmpty) 'api_token': _voiceTokenCtrl.text.trim(),
-        if (_voiceSidCtrl.text.trim().isNotEmpty) 'account_sid': _voiceSidCtrl.text.trim(),
+        _voiceSidCtrl.text.trim().isNotEmpty ||
+        _voiceNumberCtrl.text.trim().isNotEmpty ||
+        _voicePrivateKeyCtrl.text.trim().isNotEmpty) {
+      // Per-provider bucket: api_secrets.voice.exotel / .twilio / .plivo / ...
+      final providerKey = _voiceProvider == 'stub' ? 'exotel' : _voiceProvider;
+      final nested = <String, dynamic>{
+        if (_voiceNumberCtrl.text.trim().isNotEmpty) 'number': _voiceNumberCtrl.text.trim(),
       };
+      switch (providerKey) {
+        case 'twilio':
+          if (_voiceSidCtrl.text.trim().isNotEmpty) {
+            nested['account_sid'] = _voiceSidCtrl.text.trim();
+          }
+          if (_voiceKeyCtrl.text.trim().isNotEmpty) {
+            nested['auth_token'] = _voiceKeyCtrl.text.trim();
+          }
+          break;
+        case 'plivo':
+          if (_voiceSidCtrl.text.trim().isNotEmpty) nested['auth_id'] = _voiceSidCtrl.text.trim();
+          if (_voiceKeyCtrl.text.trim().isNotEmpty) {
+            nested['auth_token'] = _voiceKeyCtrl.text.trim();
+          }
+          break;
+        case 'vonage':
+          if (_voiceKeyCtrl.text.trim().isNotEmpty) nested['api_key'] = _voiceKeyCtrl.text.trim();
+          if (_voiceTokenCtrl.text.trim().isNotEmpty) {
+            nested['api_secret'] = _voiceTokenCtrl.text.trim();
+          }
+          if (_voiceSidCtrl.text.trim().isNotEmpty) {
+            nested['application_id'] = _voiceSidCtrl.text.trim();
+          }
+          if (_voicePrivateKeyCtrl.text.trim().isNotEmpty) {
+            nested['private_key'] = _voicePrivateKeyCtrl.text.trim();
+          }
+          break;
+        case 'knowlarity':
+          if (_voiceKeyCtrl.text.trim().isNotEmpty) nested['api_key'] = _voiceKeyCtrl.text.trim();
+          if (_voiceTokenCtrl.text.trim().isNotEmpty) {
+            nested['authorization'] = _voiceTokenCtrl.text.trim();
+          }
+          if (_voiceSidCtrl.text.trim().isNotEmpty) {
+            nested['k_number'] = _voiceSidCtrl.text.trim();
+          }
+          break;
+        case 'myoperator':
+          if (_voiceKeyCtrl.text.trim().isNotEmpty) nested['api_key'] = _voiceKeyCtrl.text.trim();
+          if (_voiceTokenCtrl.text.trim().isNotEmpty) {
+            nested['secret'] = _voiceTokenCtrl.text.trim();
+          }
+          if (_voiceSidCtrl.text.trim().isNotEmpty) {
+            nested['company_id'] = _voiceSidCtrl.text.trim();
+          }
+          break;
+        default: // exotel
+          if (_voiceKeyCtrl.text.trim().isNotEmpty) nested['api_key'] = _voiceKeyCtrl.text.trim();
+          if (_voiceTokenCtrl.text.trim().isNotEmpty) {
+            nested['api_token'] = _voiceTokenCtrl.text.trim();
+          }
+          if (_voiceSidCtrl.text.trim().isNotEmpty) {
+            nested['account_sid'] = _voiceSidCtrl.text.trim();
+          }
+      }
+      if (nested.isNotEmpty) {
+        secrets['voice'] = {providerKey: nested};
+      }
     }
     if (_openaiCtrl.text.trim().isNotEmpty) {
       secrets['openai'] = {'api_key': _openaiCtrl.text.trim()};
+    }
+    if (_sarvamKeyCtrl.text.trim().isNotEmpty) {
+      secrets['sarvam'] = {'api_key': _sarvamKeyCtrl.text.trim()};
     }
     if (secrets.isNotEmpty) {
       await _repo.upsertTenantApiConfig(apiSecrets: secrets);
@@ -318,7 +458,9 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
       _voiceKeyCtrl.clear();
       _voiceTokenCtrl.clear();
       _voiceSidCtrl.clear();
+      _voicePrivateKeyCtrl.clear();
       _openaiCtrl.clear();
+      _sarvamKeyCtrl.clear();
     }
     await _repo.writeAuditLog(
       action: 'tenant.settings_update',
@@ -671,34 +813,197 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                   decoration: const InputDecoration(labelText: 'Email API key (paste to update)'),
                   obscureText: true,
                 ),
+                const SizedBox(height: 16),
+                const Text('AI Voice providers', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  'Har provider ke secrets alag save hote hain (voice.exotel / voice.twilio / …). '
+                  'Active provider choose karke uske keys paste karo.',
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                ),
+                if (_voiceHints.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, bottom: 4),
+                    child: Text(
+                      'Saved: ${_voiceHints.entries.map((e) => '${e.key}(${e.value})').join(' · ')}',
+                      style: TextStyle(color: Colors.teal.shade800, fontSize: 12),
+                    ),
+                  ),
+                DropdownButtonFormField<String>(
+                  initialValue: _voiceProvider,
+                  decoration: const InputDecoration(
+                    labelText: 'Active voice provider',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'stub', child: Text('Stub (simulate)')),
+                    DropdownMenuItem(value: 'exotel', child: Text('Exotel')),
+                    DropdownMenuItem(value: 'twilio', child: Text('Twilio')),
+                    DropdownMenuItem(value: 'plivo', child: Text('Plivo')),
+                    DropdownMenuItem(value: 'vonage', child: Text('Vonage (Nexmo)')),
+                    DropdownMenuItem(value: 'knowlarity', child: Text('Knowlarity')),
+                    DropdownMenuItem(value: 'myoperator', child: Text('MyOperator')),
+                  ],
+                  onChanged: BosPermissions.canManageSettings || BosPermissions.canEdit
+                      ? (v) => setState(() {
+                            _voiceProvider = v ?? 'stub';
+                            _voiceKeysHint = _voiceHints[_voiceProvider] ?? '';
+                          })
+                      : null,
+                ),
+                if (_voiceKeysHint.isNotEmpty)
+                  Text(
+                    'Current provider keys: $_voiceKeysHint (paste to replace)',
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                  ),
                 TextField(
                   controller: _voiceNumberCtrl,
-                  decoration: const InputDecoration(labelText: 'Voice caller number'),
-                ),
-                TextField(
-                  controller: _voiceSidCtrl,
-                  decoration: const InputDecoration(labelText: 'Exotel/Twilio Account SID'),
-                  obscureText: true,
-                ),
-                TextField(
-                  controller: _voiceKeyCtrl,
-                  decoration: const InputDecoration(labelText: 'Voice API key (paste to update)'),
-                  obscureText: true,
-                ),
-                TextField(
-                  controller: _voiceTokenCtrl,
-                  decoration: const InputDecoration(labelText: 'Voice API token (Exotel)'),
-                  obscureText: true,
-                ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton(
-                    onPressed: (BosPermissions.canManageSettings || BosPermissions.canEdit)
-                        ? _saveProfile
-                        : null,
-                    child: const Text('Save settings'),
+                  decoration: InputDecoration(
+                    labelText: _voiceProvider == 'twilio' || _voiceProvider == 'plivo'
+                        ? 'Caller ID / From number'
+                        : 'Voice caller number (ExoPhone / DID / agent)',
                   ),
+                ),
+                if (_voiceProvider == 'exotel' || _voiceProvider == 'stub') ...[
+                  TextField(
+                    controller: _voiceSidCtrl,
+                    decoration: const InputDecoration(labelText: 'Exotel Account SID'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'Exotel API key'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceTokenCtrl,
+                    decoration: const InputDecoration(labelText: 'Exotel API token'),
+                    obscureText: true,
+                  ),
+                ],
+                if (_voiceProvider == 'twilio') ...[
+                  TextField(
+                    controller: _voiceSidCtrl,
+                    decoration: const InputDecoration(labelText: 'Twilio Account SID'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'Twilio Auth Token'),
+                    obscureText: true,
+                  ),
+                ],
+                if (_voiceProvider == 'plivo') ...[
+                  TextField(
+                    controller: _voiceSidCtrl,
+                    decoration: const InputDecoration(labelText: 'Plivo Auth ID'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'Plivo Auth Token'),
+                    obscureText: true,
+                  ),
+                ],
+                if (_voiceProvider == 'vonage') ...[
+                  TextField(
+                    controller: _voiceKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'Vonage API key'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceTokenCtrl,
+                    decoration: const InputDecoration(labelText: 'Vonage API secret'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceSidCtrl,
+                    decoration: const InputDecoration(labelText: 'Vonage Application ID'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voicePrivateKeyCtrl,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: 'Vonage private key PEM (RS256 JWT)',
+                    ),
+                    obscureText: true,
+                  ),
+                ],
+                if (_voiceProvider == 'knowlarity') ...[
+                  TextField(
+                    controller: _voiceKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'Knowlarity x-api-key'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceTokenCtrl,
+                    decoration: const InputDecoration(labelText: 'Authorization header (optional)'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceSidCtrl,
+                    decoration: const InputDecoration(labelText: 'k_number / SR number'),
+                  ),
+                ],
+                if (_voiceProvider == 'myoperator') ...[
+                  TextField(
+                    controller: _voiceKeyCtrl,
+                    decoration: const InputDecoration(labelText: 'MyOperator API token'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceTokenCtrl,
+                    decoration: const InputDecoration(labelText: 'Secret (optional)'),
+                    obscureText: true,
+                  ),
+                  TextField(
+                    controller: _voiceSidCtrl,
+                    decoration: const InputDecoration(labelText: 'Company ID (optional)'),
+                  ),
+                ],
+                TextField(
+                  controller: _sarvamKeyCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Sarvam API key (STT on call complete)',
+                  ),
+                  obscureText: true,
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _voiceTestPhoneCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Test dial phone (+91…)',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.phone,
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton(
+                      onPressed: (BosPermissions.canManageSettings || BosPermissions.canEdit)
+                          ? _saveProfile
+                          : null,
+                      child: const Text('Save settings'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _testingDial ||
+                              !(BosPermissions.canManageSettings ||
+                                  BosPermissions.canEdit ||
+                                  BosPermissions.canCreate)
+                          ? null
+                          : _testVoiceDial,
+                      icon: _testingDial
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.phone_forwarded),
+                      label: Text(_testingDial ? 'Dialing…' : 'Test dial'),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 24),
                 const Text('AI Sales Agent', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -813,26 +1118,11 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                       ? (v) => setState(() => _emailProvider = v ?? 'stub')
                       : null,
                 ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: _voiceProvider,
-                  decoration: const InputDecoration(
-                    labelText: 'Voice provider',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'stub', child: Text('Stub simulate')),
-                    DropdownMenuItem(value: 'exotel', child: Text('Exotel (when secrets set)')),
-                    DropdownMenuItem(value: 'twilio', child: Text('Twilio (when secrets set)')),
-                  ],
-                  onChanged: BosPermissions.canManageSettings || BosPermissions.canEdit
-                      ? (v) => setState(() => _voiceProvider = v ?? 'stub')
-                      : null,
-                ),
                 const SizedBox(height: 8),
                 Text(
-                  'Follow-up sequence (saved): Day0 WA → Day1 SMS → Day3 Email → Day7 WA offer → Day15 Email. '
-                  'Public chat: /ai-os/chat. Paste live keys above (masked after save).',
+                  'Voice provider + secrets upar “AI Voice providers” section mein hain. '
+                  'Follow-up sequence: Day0 WA → Day1 SMS → Day3 Email → Day7 WA → Day15 Email. '
+                  'Public chat: /ai-os/chat.',
                   style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
                 ),
                 const SizedBox(height: 24),
