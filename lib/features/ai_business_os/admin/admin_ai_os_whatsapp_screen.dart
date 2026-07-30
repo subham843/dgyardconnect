@@ -17,11 +17,13 @@ class AdminAiOsWhatsappScreen extends StatefulWidget {
 class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
   final _repo = BosRepository();
   List<BosConversation> _conversations = [];
+  Map<String, BosLead> _leadsById = {};
   BosConversation? _selected;
   List<BosMessage> _messages = [];
   bool _loading = true;
   bool _busy = false;
   String _channelFilter = 'all';
+  bool _hotOnly = false;
   final _composer = TextEditingController();
 
   @override
@@ -38,12 +40,21 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final conversations = await _repo.listConversations(
+    var conversations = await _repo.listConversations(
       channel: _channelFilter == 'all' ? null : _channelFilter,
     );
+    final leads = await _repo.listLeads();
+    final byId = <String, BosLead>{for (final l in leads) l.id: l};
+    if (_hotOnly) {
+      conversations = conversations.where((c) {
+        final lead = c.leadId == null ? null : byId[c.leadId];
+        return lead != null && (lead.score == 'hot' || lead.handoverReady);
+      }).toList();
+    }
     if (!mounted) return;
     setState(() {
       _conversations = conversations;
+      _leadsById = byId;
       _loading = false;
       if (_selected != null) {
         final match = conversations.where((c) => c.id == _selected!.id);
@@ -297,6 +308,12 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
     return c.channel ?? 'Chat';
   }
 
+  BosLead? _leadFor(BosConversation c) {
+    final id = c.leadId;
+    if (id == null) return null;
+    return _leadsById[id];
+  }
+
   @override
   Widget build(BuildContext context) {
     return AdminEmbeddedScaffold(
@@ -354,6 +371,15 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
                             },
                           ),
                         ),
+                      FilterChip(
+                        label: const Text('Hot / handover'),
+                        avatar: const Icon(Icons.local_fire_department, size: 18),
+                        selected: _hotOnly,
+                        onSelected: (v) {
+                          setState(() => _hotOnly = v);
+                          _load();
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -370,6 +396,9 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
                             itemBuilder: (_, i) {
                               final c = _conversations[i];
                               final selected = _selected?.id == c.id;
+                              final lead = _leadFor(c);
+                              final hot = lead?.score == 'hot';
+                              final handover = lead?.handoverReady == true;
                               return ListTile(
                                 selected: selected,
                                 leading: Badge(
@@ -378,7 +407,42 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
                                   child: Icon(_channelIcon(c.channel)),
                                 ),
                                 title: Text(_titleFor(c)),
-                                subtitle: Text('${c.channel ?? 'whatsapp'} · ${c.status ?? 'open'}'),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('${c.channel ?? 'whatsapp'} · ${c.status ?? 'open'}'),
+                                    if (hot || handover)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: Wrap(
+                                          spacing: 4,
+                                          children: [
+                                            if (hot)
+                                              Chip(
+                                                label: const Text('HOT'),
+                                                visualDensity: VisualDensity.compact,
+                                                materialTapTargetSize:
+                                                    MaterialTapTargetSize.shrinkWrap,
+                                                padding: EdgeInsets.zero,
+                                                labelStyle: const TextStyle(fontSize: 10),
+                                                backgroundColor: Colors.red.shade50,
+                                              ),
+                                            if (handover)
+                                              Chip(
+                                                label: const Text('Handover'),
+                                                visualDensity: VisualDensity.compact,
+                                                materialTapTargetSize:
+                                                    MaterialTapTargetSize.shrinkWrap,
+                                                padding: EdgeInsets.zero,
+                                                labelStyle: const TextStyle(fontSize: 10),
+                                                backgroundColor: Colors.amber.shade50,
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                isThreeLine: hot || handover,
                                 onTap: () => _open(c),
                               );
                             },

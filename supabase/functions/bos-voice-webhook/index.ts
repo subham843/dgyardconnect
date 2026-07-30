@@ -125,6 +125,7 @@ async function queueMissedCallback(
       subject: "Missed-call callback queued",
       body: `Auto follow-up for ${opts.phone} at ${when}`,
       due_at: when,
+      meta: { call_id: id, from_missed_inbound: true },
     });
     await db.from("bos_leads").update({
       next_follow_up_at: when,
@@ -505,6 +506,7 @@ Deno.serve(async (req) => {
           subject: missed ? "Missed inbound call" : "Inbound call",
           body: `Phone ${customerPhone} · ${statusRaw || eventType || "received"}`,
           completed_at: new Date().toISOString(),
+          meta: { call_id: callId },
         });
       }
       if (missed && voiceSettings.autoCallbackMissed && customerPhone) {

@@ -146,7 +146,9 @@ Widget buildAdminScreen(GoRouterState state) {
     case RouteNames.adminAiOsWhatsapp:
       return const AdminAiOsWhatsappScreen();
     case RouteNames.adminAiOsVoice:
-      return const AdminAiOsVoiceScreen();
+      return AdminAiOsVoiceScreen(
+        focusCallId: state.uri.queryParameters['call'],
+      );
     case RouteNames.adminAiOsCampaigns:
       return const AdminAiOsCampaignsScreen();
     case RouteNames.adminAiOsKnowledge:

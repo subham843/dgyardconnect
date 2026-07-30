@@ -296,6 +296,7 @@ Deno.serve(async (req) => {
           await db.from("bos_voice_calls").insert({
             id: callId,
             tenant_id: tenantId,
+            lead_id: r.lead_id ?? null,
             phone,
             direction: "outbound",
             status: "queued",
@@ -309,6 +310,22 @@ Deno.serve(async (req) => {
               scheduled_at: when,
             },
           });
+          if (r.lead_id) {
+            await db.from("bos_leads").update({
+              source: "campaign",
+              updated_at: new Date().toISOString(),
+            }).eq("id", r.lead_id);
+            await db.from("bos_activities").insert({
+              id: crypto.randomUUID(),
+              tenant_id: tenantId,
+              lead_id: r.lead_id,
+              activity_type: "voice_queued",
+              subject: "Campaign voice queued",
+              body: script,
+              due_at: when,
+              meta: { call_id: callId, campaign_id: campaignId },
+            });
+          }
           // Leave queued for Hub/Voice “Run due” (or dial immediately if already due)
           try {
             const dialUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/bos-voice-dial`;

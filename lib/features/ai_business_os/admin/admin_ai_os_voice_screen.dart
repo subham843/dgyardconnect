@@ -17,9 +17,10 @@ const _outcomes = [
 ];
 
 class AdminAiOsVoiceScreen extends StatefulWidget {
-  const AdminAiOsVoiceScreen({super.key, this.embedded = false});
+  const AdminAiOsVoiceScreen({super.key, this.embedded = false, this.focusCallId});
 
   final bool embedded;
+  final String? focusCallId;
 
   @override
   State<AdminAiOsVoiceScreen> createState() => _AdminAiOsVoiceScreenState();
@@ -36,6 +37,7 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
   String? _statusFilter;
   String _activeProvider = 'stub';
   bool _runningDue = false;
+  bool _openedFocusCall = false;
 
   @override
   void initState() {
@@ -90,6 +92,35 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
         _activeProvider = provider;
         _loading = false;
       });
+      if (!_openedFocusCall &&
+          widget.focusCallId != null &&
+          widget.focusCallId!.isNotEmpty) {
+        _openedFocusCall = true;
+        BosVoiceCall? match;
+        for (final c in items) {
+          if (c.id == widget.focusCallId) {
+            match = c;
+            break;
+          }
+        }
+        if (match == null) {
+          try {
+            final all = await _repo.listVoiceCalls();
+            for (final c in all) {
+              if (c.id == widget.focusCallId) {
+                match = c;
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+        if (match != null && mounted) {
+          final call = match;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showCallDetail(call);
+          });
+        }
+      }
     }
   }
 
@@ -112,6 +143,116 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
   void _denied() {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Permission denied')),
+    );
+  }
+
+  void _showCallDetail(BosVoiceCall c) {
+    final sched = c.scheduledAt?.toLocal().toString().substring(0, 16);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(c.phone ?? 'Call'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Status: ${c.status}'),
+              Text(
+                'Provider: ${c.voiceProviderLabel}'
+                '${c.dialSim ? ' · stub dial' : ' · live'}'
+                '${c.isInbound ? ' · inbound' : ''}',
+              ),
+              if (c.sttProvider != null) Text('STT: ${c.sttProvider}'),
+              if (c.providerCallId != null) Text('Provider call ID: ${c.providerCallId}'),
+              if (c.recordingUrl != null) Text('Recording: ${c.recordingUrl}'),
+              if (c.outcome != null) Text('Outcome: ${c.outcome}'),
+              if (sched != null) Text('Scheduled: $sched'),
+              if (c.script != null) ...[
+                const SizedBox(height: 8),
+                const Text('Script', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(c.script!),
+              ],
+              if (c.transcript != null) ...[
+                const SizedBox(height: 8),
+                const Text('Transcript', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(c.transcript!),
+              ],
+              if (c.aiSummary != null) ...[
+                const SizedBox(height: 8),
+                const Text('AI summary', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(c.aiSummary!),
+              ],
+              if (c.nextAction != null) Text('Next action: ${c.nextAction}'),
+              if (_eventsFor(c.id).isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('Event timeline', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                ..._eventsFor(c.id).map((e) {
+                  final at = e['created_at']?.toString();
+                  final short = at != null && at.length >= 19
+                      ? at.substring(0, 19).replaceFirst('T', ' ')
+                      : (at ?? '');
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.circle, size: 8, color: Colors.teal.shade700),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${e['event_type'] ?? 'event'}'
+                            '${e['provider'] != null ? ' · ${e['provider']}' : ''}'
+                            '${short.isNotEmpty ? ' · $short' : ''}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          if (c.leadId != null)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                context.go('${RouteNames.adminAiOsLeads}?lead=${c.leadId}');
+              },
+              child: const Text('Open lead'),
+            ),
+          if (c.recordingUrl != null && c.recordingUrl!.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                playAudioUrl(c.recordingUrl!);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Playing recording…')),
+                );
+              },
+              child: const Text('Play recording'),
+            ),
+          if (c.script != null && c.script!.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _previewScript(c.script!);
+              },
+              child: const Text('Preview TTS'),
+            ),
+          if (c.isOpen)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _dial(c);
+              },
+              child: const Text('Re-dial'),
+            ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
     );
   }
 
@@ -624,119 +765,7 @@ class _AdminAiOsVoiceScreenState extends State<AdminAiOsVoiceScreen> {
                                     ),
                                   ],
                                 ),
-                                onTap: () => showDialog<void>(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: Text(c.phone ?? 'Call'),
-                                    content: SingleChildScrollView(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text('Status: ${c.status}'),
-                                          Text(
-                                            'Provider: ${c.voiceProviderLabel}'
-                                            '${c.dialSim ? ' · stub dial' : ' · live'}'
-                                            '${c.isInbound ? ' · inbound' : ''}',
-                                          ),
-                                          if (c.sttProvider != null) Text('STT: ${c.sttProvider}'),
-                                          if (c.providerCallId != null)
-                                            Text('Provider call ID: ${c.providerCallId}'),
-                                          if (c.recordingUrl != null) Text('Recording: ${c.recordingUrl}'),
-                                          if (c.outcome != null) Text('Outcome: ${c.outcome}'),
-                                          if (sched != null) Text('Scheduled: $sched'),
-                                          if (c.script != null) ...[
-                                            const SizedBox(height: 8),
-                                            const Text('Script', style: TextStyle(fontWeight: FontWeight.bold)),
-                                            Text(c.script!),
-                                          ],
-                                          if (c.transcript != null) ...[
-                                            const SizedBox(height: 8),
-                                            const Text('Transcript', style: TextStyle(fontWeight: FontWeight.bold)),
-                                            Text(c.transcript!),
-                                          ],
-                                          if (c.aiSummary != null) ...[
-                                            const SizedBox(height: 8),
-                                            const Text('AI summary', style: TextStyle(fontWeight: FontWeight.bold)),
-                                            Text(c.aiSummary!),
-                                          ],
-                                          if (c.nextAction != null) Text('Next action: ${c.nextAction}'),
-                                          if (_eventsFor(c.id).isNotEmpty) ...[
-                                            const SizedBox(height: 12),
-                                            const Text('Event timeline', style: TextStyle(fontWeight: FontWeight.bold)),
-                                            const SizedBox(height: 4),
-                                            ..._eventsFor(c.id).map((e) {
-                                              final at = e['created_at']?.toString();
-                                              final short = at != null && at.length >= 19
-                                                  ? at.substring(0, 19).replaceFirst('T', ' ')
-                                                  : (at ?? '');
-                                              return Padding(
-                                                padding: const EdgeInsets.only(bottom: 4),
-                                                child: Row(
-                                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                                  children: [
-                                                    Icon(
-                                                      Icons.circle,
-                                                      size: 8,
-                                                      color: Colors.teal.shade700,
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                    Expanded(
-                                                      child: Text(
-                                                        '${e['event_type'] ?? 'event'}'
-                                                        '${e['provider'] != null ? ' · ${e['provider']}' : ''}'
-                                                        '${short.isNotEmpty ? ' · $short' : ''}',
-                                                        style: const TextStyle(fontSize: 12),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-                                            }),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                    actions: [
-                                      if (c.leadId != null)
-                                        TextButton(
-                                          onPressed: () {
-                                            Navigator.pop(ctx);
-                                            context.go(
-                                              '${RouteNames.adminAiOsLeads}?lead=${c.leadId}',
-                                            );
-                                          },
-                                          child: const Text('Open lead'),
-                                        ),
-                                      if (c.recordingUrl != null && c.recordingUrl!.isNotEmpty)
-                                        TextButton(
-                                          onPressed: () {
-                                            playAudioUrl(c.recordingUrl!);
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              const SnackBar(content: Text('Playing recording…')),
-                                            );
-                                          },
-                                          child: const Text('Play recording'),
-                                        ),
-                                      if (c.script != null && c.script!.isNotEmpty)
-                                        TextButton(
-                                          onPressed: () {
-                                            Navigator.pop(ctx);
-                                            _previewScript(c.script!);
-                                          },
-                                          child: const Text('Preview TTS'),
-                                        ),
-                                      if (c.isOpen)
-                                        TextButton(
-                                          onPressed: () {
-                                            Navigator.pop(ctx);
-                                            _dial(c);
-                                          },
-                                          child: const Text('Re-dial'),
-                                        ),
-                                      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
-                                    ],
-                                  ),
-                                ),
+                                onTap: () => _showCallDetail(c),
                               );
                             },
                           ),

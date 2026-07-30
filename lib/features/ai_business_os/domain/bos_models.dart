@@ -458,6 +458,7 @@ class BosActivity {
     this.dueAt,
     this.completedAt,
     this.assignedTo,
+    this.meta,
   });
 
   final String id;
@@ -473,8 +474,23 @@ class BosActivity {
   final DateTime? completedAt;
   final String? assignedTo;
   final DateTime createdAt;
+  final Map<String, dynamic>? meta;
 
   bool get isOpenTask => dueAt != null && completedAt == null;
+
+  /// Linked voice call for callback / queue activities.
+  String? get voiceCallId {
+    final raw = meta?['call_id'] ?? meta?['callback_call_id'] ?? meta?['voice_call_id'];
+    final s = raw?.toString().trim();
+    return (s == null || s.isEmpty) ? null : s;
+  }
+
+  bool get linksToVoiceCall =>
+      voiceCallId != null ||
+      activityType.startsWith('voice_callback') ||
+      activityType == 'voice_queued' ||
+      activityType == 'voice_inbound' ||
+      activityType == 'voice_missed';
 
   factory BosActivity.fromMap(Map<String, dynamic> map) => BosActivity(
         id: map['id'] as String,
@@ -492,6 +508,9 @@ class BosActivity {
             : DateTime.tryParse(map['completed_at'] as String),
         assignedTo: map['assigned_to'] as String?,
         createdAt: DateTime.parse(map['created_at'] as String),
+        meta: map['meta'] is Map
+            ? Map<String, dynamic>.from(map['meta'] as Map)
+            : null,
       );
 }
 

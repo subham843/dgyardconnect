@@ -1102,6 +1102,7 @@ class BosRepository extends SupabaseRepositoryBase {
     String? dealId,
     String? createdBy,
     DateTime? dueAt,
+    Map<String, dynamic>? meta,
   }) async {
     final client = await SupabaseRepositoryBase.clientWithAuth();
     if (client == null) throw Exception('Not authenticated');
@@ -1118,6 +1119,7 @@ class BosRepository extends SupabaseRepositoryBase {
       'deal_id': dealId,
       'created_by': createdBy,
       if (dueAt != null) 'due_at': dueAt.toIso8601String(),
+      if (meta != null && meta.isNotEmpty) 'meta': meta,
     });
     await writeAuditLog(
       action: 'activity.create',
@@ -1142,6 +1144,7 @@ class BosRepository extends SupabaseRepositoryBase {
     String? subject,
     String? body,
     String? createdBy,
+    Map<String, dynamic>? meta,
   }) =>
       addActivity(
         activityType: activityType,
@@ -1149,6 +1152,7 @@ class BosRepository extends SupabaseRepositoryBase {
         body: body,
         leadId: leadId,
         createdBy: createdBy,
+        meta: meta,
       );
 
   Future<void> setLeadFollowUp(String leadId, DateTime? when) async {
@@ -2526,6 +2530,7 @@ ${e.answers}
       body: script,
       leadId: leadId,
       dueAt: when,
+      meta: {'call_id': id},
     );
     await writeAuditLog(
       action: 'voice.queue_follow_up',
@@ -3422,16 +3427,36 @@ ${e.answers}
     return (res as List).map((r) => SupabaseRepositoryBase.rowToMap(r)).toList();
   }
 
-  Future<void> addOptOut(String phone, {String reason = 'manual'}) async {
+  Future<void> addOptOut(
+    String phone, {
+    String reason = 'manual',
+    String channel = 'voice',
+  }) async {
     final client = await SupabaseRepositoryBase.clientWithAuth();
     if (client == null) return;
     final tid = await activeTenantId;
     await client.from('bos_opt_outs').upsert({
       'tenant_id': tid,
       'phone': phone.trim(),
-      'channel': 'whatsapp',
+      'channel': channel,
       'reason': reason,
     });
+    await writeAuditLog(
+      action: 'opt_out.add',
+      entityType: 'bos_opt_outs',
+      meta: {'phone': phone.trim(), 'channel': channel, 'reason': reason},
+    );
+  }
+
+  Future<void> removeOptOut(String id) async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) return;
+    await client.from('bos_opt_outs').delete().eq('id', id);
+    await writeAuditLog(
+      action: 'opt_out.remove',
+      entityType: 'bos_opt_outs',
+      entityId: id,
+    );
   }
 
   Future<List<Map<String, dynamic>>> listCampaignRecipients(String campaignId) async {

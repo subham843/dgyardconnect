@@ -2,8 +2,10 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 
+import '../../../core/constants/route_names.dart';
 import '../../../core/supabase/supabase_auth_service.dart';
 import '../../../features/admin/widgets/admin_embedded_scaffold.dart';
 import '../data/bos_repository.dart';
@@ -36,6 +38,7 @@ class _AdminAiOsLeadsScreenState extends State<AdminAiOsLeadsScreen> {
   bool _loading = true;
   String? _filterStage;
   String? _filterScore;
+  String? _filterSource; // voice_inbound | inbox | campaign | null=all
   bool _boardView = true;
   bool _overdueOnly = false;
   bool _aiQueueOnly = false;
@@ -71,6 +74,9 @@ class _AdminAiOsLeadsScreenState extends State<AdminAiOsLeadsScreen> {
                 l.stage != 'lost',
           )
           .toList();
+    }
+    if (_filterSource != null) {
+      leads = leads.where((l) => _matchesSourceFilter(l.source, _filterSource!)).toList();
     }
     final tid = await _repo.activeTenantId;
     final members = await _repo.listMembers(tid);
@@ -108,6 +114,20 @@ class _AdminAiOsLeadsScreenState extends State<AdminAiOsLeadsScreen> {
           });
         }
       }
+    }
+  }
+
+  bool _matchesSourceFilter(String? source, String filter) {
+    final s = (source ?? '').toLowerCase().trim();
+    switch (filter) {
+      case 'voice_inbound':
+        return s == 'voice_inbound' || s.startsWith('voice_');
+      case 'inbox':
+        return s.startsWith('inbox_') || s == 'whatsapp' || s == 'web' || s == 'app';
+      case 'campaign':
+        return s == 'campaign' || s.startsWith('campaign_') || s.contains('campaign');
+      default:
+        return true;
     }
   }
 
@@ -281,88 +301,106 @@ class _AdminAiOsLeadsScreenState extends State<AdminAiOsLeadsScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: true, label: Text('Board'), icon: Icon(Icons.view_kanban)),
-                    ButtonSegment(value: false, label: Text('List'), icon: Icon(Icons.list)),
-                  ],
-                  selected: {_boardView},
-                  onSelectionChanged: (s) => setState(() => _boardView = s.first),
-                ),
-                const SizedBox(width: 16),
-                DropdownButton<String?>(
-                  value: _filterStage,
-                  hint: const Text('Stage'),
-                  items: const [
-                    DropdownMenuItem(value: null, child: Text('All stages')),
-                    DropdownMenuItem(value: 'new', child: Text('New')),
-                    DropdownMenuItem(value: 'contacted', child: Text('Contacted')),
-                    DropdownMenuItem(value: 'qualified', child: Text('Qualified')),
-                    DropdownMenuItem(value: 'proposal', child: Text('Proposal')),
-                    DropdownMenuItem(value: 'won', child: Text('Converted')),
-                    DropdownMenuItem(value: 'lost', child: Text('Lost')),
-                  ],
-                  onChanged: (v) {
-                    setState(() => _filterStage = v);
-                    _loadLeads();
-                  },
-                ),
-                const SizedBox(width: 16),
-                DropdownButton<String?>(
-                  value: _filterScore,
-                  hint: const Text('Score'),
-                  items: const [
-                    DropdownMenuItem(value: null, child: Text('All scores')),
-                    DropdownMenuItem(value: 'hot', child: Text('Hot')),
-                    DropdownMenuItem(value: 'warm', child: Text('Warm')),
-                    DropdownMenuItem(value: 'cold', child: Text('Cold')),
-                  ],
-                  onChanged: (v) {
-                    setState(() => _filterScore = v);
-                    _loadLeads();
-                  },
-                ),
-                const SizedBox(width: 16),
-                FilterChip(
-                  label: const Text('Overdue follow-ups'),
-                  selected: _overdueOnly,
-                  onSelected: (v) {
-                    setState(() => _overdueOnly = v);
-                    _loadLeads();
-                  },
-                ),
-                const SizedBox(width: 8),
-                FilterChip(
-                  label: const Text('AI Queue'),
-                  selected: _aiQueueOnly,
-                  avatar: const Icon(Icons.smart_toy_outlined, size: 18),
-                  onSelected: (v) {
-                    setState(() => _aiQueueOnly = v);
-                    _loadLeads();
-                  },
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: () async {
-                    try {
-                      final r = await _repo.runSalesFollowups();
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Follow-ups processed: ${r['processed'] ?? 0}')),
-                        );
-                      }
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(value: true, label: Text('Board'), icon: Icon(Icons.view_kanban)),
+                      ButtonSegment(value: false, label: Text('List'), icon: Icon(Icons.list)),
+                    ],
+                    selected: {_boardView},
+                    onSelectionChanged: (s) => setState(() => _boardView = s.first),
+                  ),
+                  const SizedBox(width: 16),
+                  DropdownButton<String?>(
+                    value: _filterStage,
+                    hint: const Text('Stage'),
+                    items: const [
+                      DropdownMenuItem(value: null, child: Text('All stages')),
+                      DropdownMenuItem(value: 'new', child: Text('New')),
+                      DropdownMenuItem(value: 'contacted', child: Text('Contacted')),
+                      DropdownMenuItem(value: 'qualified', child: Text('Qualified')),
+                      DropdownMenuItem(value: 'proposal', child: Text('Proposal')),
+                      DropdownMenuItem(value: 'won', child: Text('Converted')),
+                      DropdownMenuItem(value: 'lost', child: Text('Lost')),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _filterStage = v);
                       _loadLeads();
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                    },
+                  ),
+                  const SizedBox(width: 16),
+                  DropdownButton<String?>(
+                    value: _filterScore,
+                    hint: const Text('Score'),
+                    items: const [
+                      DropdownMenuItem(value: null, child: Text('All scores')),
+                      DropdownMenuItem(value: 'hot', child: Text('Hot')),
+                      DropdownMenuItem(value: 'warm', child: Text('Warm')),
+                      DropdownMenuItem(value: 'cold', child: Text('Cold')),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _filterScore = v);
+                      _loadLeads();
+                    },
+                  ),
+                  const SizedBox(width: 16),
+                  DropdownButton<String?>(
+                    value: _filterSource,
+                    hint: const Text('Source'),
+                    items: const [
+                      DropdownMenuItem(value: null, child: Text('All sources')),
+                      DropdownMenuItem(value: 'voice_inbound', child: Text('Voice inbound')),
+                      DropdownMenuItem(value: 'inbox', child: Text('Inbox / chat')),
+                      DropdownMenuItem(value: 'campaign', child: Text('Campaign')),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _filterSource = v);
+                      _loadLeads();
+                    },
+                  ),
+                  const SizedBox(width: 16),
+                  FilterChip(
+                    label: const Text('Overdue follow-ups'),
+                    selected: _overdueOnly,
+                    onSelected: (v) {
+                      setState(() => _overdueOnly = v);
+                      _loadLeads();
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: const Text('AI Queue'),
+                    selected: _aiQueueOnly,
+                    avatar: const Icon(Icons.smart_toy_outlined, size: 18),
+                    onSelected: (v) {
+                      setState(() => _aiQueueOnly = v);
+                      _loadLeads();
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () async {
+                      try {
+                        final r = await _repo.runSalesFollowups();
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('Follow-ups processed: ${r['processed'] ?? 0}')),
+                          );
+                        }
+                        _loadLeads();
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                        }
                       }
-                    }
-                  },
-                  child: const Text('Run AI follow-ups'),
-                ),
-              ],
+                    },
+                    child: const Text('Run AI follow-ups'),
+                  ),
+                ],
+              ),
             ),
           ),
           Expanded(
@@ -940,9 +978,26 @@ class _LeadDetailDialogState extends State<_LeadDetailDialog> {
                       ? const Icon(Icons.phone_disabled, size: 18, color: Colors.orange)
                       : a.activityType == 'dnd_on'
                           ? const Icon(Icons.do_not_disturb_on, size: 18, color: Colors.orange)
-                          : null,
+                          : a.linksToVoiceCall
+                              ? const Icon(Icons.phone_in_talk, size: 18, color: Colors.teal)
+                              : null,
                   title: Text(a.subject ?? a.activityType),
-                  subtitle: Text(a.body ?? ''),
+                  subtitle: Text(
+                    a.voiceCallId != null
+                        ? '${a.body ?? ''}${a.body != null && a.body!.isNotEmpty ? '\n' : ''}Open Voice call'
+                        : (a.body ?? ''),
+                  ),
+                  trailing: a.voiceCallId != null
+                      ? const Icon(Icons.open_in_new, size: 16)
+                      : null,
+                  onTap: a.voiceCallId == null
+                      ? null
+                      : () {
+                          Navigator.pop(context);
+                          context.go(
+                            '${RouteNames.adminAiOsVoice}?call=${a.voiceCallId}',
+                          );
+                        },
                 ),
               ),
             ],

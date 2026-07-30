@@ -60,6 +60,9 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   bool _loadingReady = false;
   List<Map<String, dynamic>> _voiceEventDogfood = [];
   bool _pingingWebhook = false;
+  List<Map<String, dynamic>> _optOuts = [];
+  final _optOutPhoneCtrl = TextEditingController();
+  bool _savingOptOut = false;
 
   final _nameCtrl = TextEditingController();
   final _primaryCtrl = TextEditingController();
@@ -127,6 +130,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     _ttsPreviewCtrl.dispose();
     _inboundGreetingCtrl.dispose();
     _telnyxPublicKeyCtrl.dispose();
+    _optOutPhoneCtrl.dispose();
     super.dispose();
   }
 
@@ -260,8 +264,46 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
         _webhookTelnyx = await _repo.voiceWebhookUrl(provider: 'telnyx');
         _voiceReady = await _repo.voiceReadinessChecklist();
         _voiceEventDogfood = await _repo.listVoiceEvents(limit: 5);
+        _optOuts = await _repo.listOptOuts();
       } catch (_) {}
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _addOptOutPhone() async {
+    final phone = _optOutPhoneCtrl.text.trim();
+    if (phone.isEmpty) return;
+    if (!(BosPermissions.canManageSettings || BosPermissions.canEdit)) return;
+    setState(() => _savingOptOut = true);
+    try {
+      await _repo.addOptOut(phone, reason: 'manual', channel: 'voice');
+      _optOutPhoneCtrl.clear();
+      final list = await _repo.listOptOuts();
+      if (mounted) {
+        setState(() => _optOuts = list);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Opt-out added: $phone')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _savingOptOut = false);
+    }
+  }
+
+  Future<void> _removeOptOutPhone(String id) async {
+    if (!(BosPermissions.canManageSettings || BosPermissions.canEdit)) return;
+    try {
+      await _repo.removeOptOut(id);
+      final list = await _repo.listOptOuts();
+      if (mounted) setState(() => _optOuts = list);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
     }
   }
 
@@ -1297,6 +1339,70 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                       ? (v) => setState(() => _autoCallbackMissed = v)
                       : null,
                 ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Voice / SMS opt-outs',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Blocked phones skip missed-call auto-callbacks (bos_opt_outs).',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _optOutPhoneCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Phone to block (+91…)',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        keyboardType: TextInputType.phone,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonal(
+                      onPressed: _savingOptOut ||
+                              !(BosPermissions.canManageSettings || BosPermissions.canEdit)
+                          ? null
+                          : _addOptOutPhone,
+                      child: Text(_savingOptOut ? '…' : 'Add'),
+                    ),
+                  ],
+                ),
+                if (_optOuts.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'No opt-outs yet',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    ),
+                  )
+                else
+                  ..._optOuts.take(20).map((o) {
+                    final phone = '${o['phone'] ?? ''}';
+                    final channel = '${o['channel'] ?? ''}';
+                    final reason = '${o['reason'] ?? ''}';
+                    return ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(phone),
+                      subtitle: Text(
+                        [if (channel.isNotEmpty) channel, if (reason.isNotEmpty) reason]
+                            .join(' · '),
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Remove',
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        onPressed: (BosPermissions.canManageSettings || BosPermissions.canEdit)
+                            ? () => _removeOptOutPhone('${o['id']}')
+                            : null,
+                      ),
+                    );
+                  }),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _voiceTestPhoneCtrl,

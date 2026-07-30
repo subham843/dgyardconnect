@@ -253,6 +253,7 @@ class _GuideList extends StatelessWidget {
               'Telnyx: Connection ID + From number; webhook Call Control app में paste।\n'
               'Hub/Voice “Run due”: scheduled callbacks / campaign voice dial।\n'
               'Lead “Do not call”: missed auto-callback skip। Inbox से Queue AI call।\n'
+              'Opt-outs: Settings में phone block। Smoke: scripts/voice-smoke.md।\n'
               'Marketing: ब्रीफ → Generate; campaign voice भी Due में दिखेगा।',
           route: RouteNames.adminAiOsVoice,
         ),
@@ -392,7 +393,8 @@ class _GuideList extends StatelessWidget {
             '• Copy webhook URL into Telnyx Call Control (or Twilio/Exotel) status callbacks.\n'
             '• Queue calls from Voice, Leads, or Inbox “Queue AI call”.\n'
             '• Hub/Voice “Run due” dials scheduled callbacks and campaign voice queues.\n'
-            '• Lead “Do not call” / opt-outs skip missed-call auto-callbacks.\n'
+            '• Lead “Do not call” / Settings opt-outs skip missed-call auto-callbacks.\n'
+            '• Dogfood: scripts/voice-smoke.md (Telnyx 10-step).\n'
             '• Complete/recording → Sarvam STT when key is set. Marketing Generate for ad copy.',
         route: RouteNames.adminAiOsVoice,
       ),
