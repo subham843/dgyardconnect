@@ -2577,6 +2577,8 @@ ${e.answers}
   Future<Map<String, dynamic>> previewVoiceTts({
     required String text,
     String language = 'hi-IN',
+    String? speaker,
+    String? model,
   }) async {
     await SupabaseAuthService.instance.syncSessionFromFirebase();
     final tid = await activeTenantId;
@@ -2592,10 +2594,15 @@ ${e.answers}
         'tenant_id': tid,
         'text': text,
         'language': language,
+        if (speaker != null && speaker.isNotEmpty) 'speaker': speaker,
+        if (model != null && model.isNotEmpty) 'model': model,
       }),
     );
     final body = jsonDecode(res.body);
-    if (res.statusCode >= 400) throw Exception(body['error'] ?? res.body);
+    if (res.statusCode >= 400) {
+      final err = body is Map ? (body['error'] ?? body) : body;
+      throw Exception(err is Map ? (err['message'] ?? err.toString()) : '$err');
+    }
     return Map<String, dynamic>.from(body as Map);
   }
 

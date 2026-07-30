@@ -60,6 +60,9 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   final _missedWaMsgCtrl = TextEditingController(
     text: "Hi, this is DG.YARD — we missed your call. We'll call you back shortly. Reply STOP to opt out.",
   );
+  String _sarvamModel = 'bulbul:v3';
+  String _sarvamSpeaker = 'shubh';
+  String _sarvamHint = '';
   Map<String, dynamic>? _voiceReady;
   bool _loadingReady = false;
   List<Map<String, dynamic>> _voiceEventDogfood = [];
@@ -208,6 +211,15 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           if (vo['missed_wa_message'] != null && '${vo['missed_wa_message']}'.isNotEmpty) {
             _missedWaMsgCtrl.text = '${vo['missed_wa_message']}';
           }
+          final model = '${vo['sarvam_model'] ?? vo['tts_model'] ?? 'bulbul:v3'}';
+          _sarvamModel = model.contains('v2') ? 'bulbul:v2' : 'bulbul:v3';
+          final sp = '${vo['sarvam_speaker'] ?? vo['tts_speaker'] ?? ''}'.trim().toLowerCase();
+          _sarvamSpeaker = sp.isEmpty || sp == 'meera'
+              ? (_sarvamModel == 'bulbul:v2' ? 'anushka' : 'shubh')
+              : sp;
+          if (!_speakersForModel(_sarvamModel).contains(_sarvamSpeaker)) {
+            _sarvamSpeaker = _sarvamModel == 'bulbul:v2' ? 'anushka' : 'shubh';
+          }
         }
       }
       final settingsJson = settings?['settings'];
@@ -262,8 +274,10 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 (_voiceHints.isEmpty ? '' : 'saved: ${_voiceHints.keys.join(", ")}');
           }
           final sarvam = secrets['sarvam'];
-          if (sarvam is Map && sarvam['api_key'] is Map) {
-            // hint only — field stays empty for replace
+          if (sarvam is Map && sarvam['api_key'] is Map && (sarvam['api_key'] as Map)['set'] == true) {
+            _sarvamHint = '${(sarvam['api_key'] as Map)['hint'] ?? 'set'}';
+          } else {
+            _sarvamHint = '';
           }
         }
       } catch (_) { /* optional */ }
@@ -369,9 +383,12 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     if (text.isEmpty) return;
     setState(() => _previewingTts = true);
     try {
+      await _saveProfile();
       final r = await _repo.previewVoiceTts(
         text: text,
         language: _aiLanguage == 'en' ? 'en-IN' : 'hi-IN',
+        speaker: _sarvamSpeaker,
+        model: _sarvamModel,
       );
       if (!mounted) return;
       if (r['sim'] == true) {
@@ -389,7 +406,11 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
       }
       playBase64Audio(b64, contentType: '${r['content_type'] ?? 'audio/wav'}');
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Playing Sarvam TTS preview…')),
+        SnackBar(
+          content: Text(
+            'Playing ${_sarvamSpeaker} (${r['model'] ?? _sarvamModel})…',
+          ),
+        ),
       );
     } catch (e) {
       if (mounted) {
@@ -409,6 +430,59 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     }
     return s;
   }
+
+  static const _sarvamSpeakersV2 = [
+    'anushka',
+    'abhilash',
+    'manisha',
+    'vidya',
+    'arya',
+    'karun',
+    'hitesh',
+  ];
+
+  static const _sarvamSpeakersV3 = [
+    'shubh',
+    'aditya',
+    'priya',
+    'neha',
+    'rahul',
+    'pooja',
+    'rohan',
+    'simran',
+    'kavya',
+    'amit',
+    'dev',
+    'ishita',
+    'shreya',
+    'ratan',
+    'varun',
+    'manan',
+    'sumit',
+    'roopa',
+    'kabir',
+    'aayan',
+    'ashutosh',
+    'advait',
+    'anand',
+    'tanya',
+    'tarun',
+    'sunny',
+    'mani',
+    'gokul',
+    'vijay',
+    'shruti',
+    'suhani',
+    'mohit',
+    'kavitha',
+    'rehan',
+    'soham',
+    'rupali',
+    'rilu',
+  ];
+
+  List<String> _speakersForModel(String model) =>
+      model.contains('v2') ? _sarvamSpeakersV2 : _sarvamSpeakersV3;
 
   Future<void> _verifyVoiceKeys() async {
     if (!BosPermissions.canManageSettings && !BosPermissions.canEdit) {
@@ -576,6 +650,9 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
           'auto_callback_missed': _autoCallbackMissed,
           'auto_wa_missed': _autoWaMissed,
           'missed_wa_message': _missedWaMsgCtrl.text.trim(),
+          'sarvam_model': _sarvamModel,
+          'sarvam_speaker': _sarvamSpeaker,
+          'sarvam_language': _aiLanguage == 'en' ? 'en-IN' : 'hi-IN',
         },
       },
       apiKeysPlaceholder: {
@@ -1374,11 +1451,66 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                 ],
                 TextField(
                   controller: _sarvamKeyCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Sarvam API key (STT + TTS preview)',
+                  decoration: InputDecoration(
+                    labelText: _sarvamHint.isEmpty
+                        ? 'Sarvam API key (STT + TTS preview)'
+                        : 'Sarvam API key (saved $_sarvamHint — paste to replace)',
+                    border: const OutlineInputBorder(),
                   ),
                   obscureText: true,
                 ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: _sarvamModel,
+                  decoration: const InputDecoration(
+                    labelText: 'Sarvam TTS model',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'bulbul:v3', child: Text('bulbul:v3 (recommended)')),
+                    DropdownMenuItem(value: 'bulbul:v2', child: Text('bulbul:v2')),
+                  ],
+                  onChanged: (BosPermissions.canManageSettings || BosPermissions.canEdit)
+                      ? (v) {
+                          final model = v ?? 'bulbul:v3';
+                          setState(() {
+                            _sarvamModel = model;
+                            final list = _speakersForModel(model);
+                            if (!list.contains(_sarvamSpeaker)) {
+                              _sarvamSpeaker = model.contains('v2') ? 'anushka' : 'shubh';
+                            }
+                          });
+                        }
+                      : null,
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: _speakersForModel(_sarvamModel).contains(_sarvamSpeaker)
+                      ? _sarvamSpeaker
+                      : (_sarvamModel.contains('v2') ? 'anushka' : 'shubh'),
+                  decoration: const InputDecoration(
+                    labelText: 'Sarvam voice (Indian speakers)',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _speakersForModel(_sarvamModel)
+                      .map(
+                        (s) => DropdownMenuItem(
+                          value: s,
+                          child: Text(s[0].toUpperCase() + s.substring(1)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (BosPermissions.canManageSettings || BosPermissions.canEdit)
+                      ? (v) => setState(() => _sarvamSpeaker = v ?? _sarvamSpeaker)
+                      : null,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Test: Save Sarvam key → choose voice → Preview TTS. '
+                  'Language follows AI agent language (hi-IN / en-IN).',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
+                const SizedBox(height: 8),
                 TextField(
                   controller: _ttsPreviewCtrl,
                   maxLines: 2,
