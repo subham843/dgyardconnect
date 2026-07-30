@@ -599,10 +599,12 @@ class _LeadDetailDialogState extends State<_LeadDetailDialog> {
   bool _busy = false;
   String? _aiResult;
   List<BosActivity> _activities = [];
+  late bool _doNotCall;
 
   @override
   void initState() {
     super.initState();
+    _doNotCall = widget.lead.doNotCall;
     _loadActivities();
   }
 
@@ -847,6 +849,36 @@ class _LeadDetailDialogState extends State<_LeadDetailDialog> {
               Text(
                 'Follow-up: ${widget.lead.nextFollowUpAt?.toLocal().toString().substring(0, 16) ?? 'Not set'}',
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Do not call'),
+                subtitle: Text(
+                  _doNotCall
+                      ? 'Missed-call auto-callbacks skipped for this lead'
+                      : 'Allow auto-callback on missed inbound',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                value: _doNotCall,
+                onChanged: !BosPermissions.canEdit || _busy
+                    ? null
+                    : (v) async {
+                        setState(() {
+                          _doNotCall = v;
+                          _busy = true;
+                        });
+                        try {
+                          await widget.repo.setLeadDoNotCall(widget.lead.id, v);
+                          await _loadActivities();
+                        } catch (e) {
+                          if (mounted) {
+                            setState(() => _doNotCall = !v);
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                          }
+                        } finally {
+                          if (mounted) setState(() => _busy = false);
+                        }
+                      },
+              ),
               if (widget.lead.requirements != null) ...[
                 const SizedBox(height: 12),
                 const Text('Requirements', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -904,6 +936,11 @@ class _LeadDetailDialogState extends State<_LeadDetailDialog> {
               ..._activities.map(
                 (a) => ListTile(
                   dense: true,
+                  leading: a.activityType == 'voice_callback_skipped'
+                      ? const Icon(Icons.phone_disabled, size: 18, color: Colors.orange)
+                      : a.activityType == 'dnd_on'
+                          ? const Icon(Icons.do_not_disturb_on, size: 18, color: Colors.orange)
+                          : null,
                   title: Text(a.subject ?? a.activityType),
                   subtitle: Text(a.body ?? ''),
                 ),

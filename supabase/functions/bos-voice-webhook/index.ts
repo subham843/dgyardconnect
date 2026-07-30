@@ -533,6 +533,17 @@ Deno.serve(async (req) => {
               eventType: "missed_callback_skipped",
               payload: { reason: "dnd_or_opt_out", phone: customerPhone },
             });
+            if (leadId) {
+              await db.from("bos_activities").insert({
+                id: crypto.randomUUID(),
+                tenant_id: tenantHint,
+                lead_id: leadId,
+                activity_type: "voice_callback_skipped",
+                subject: "Missed-call callback skipped",
+                body: "Do not call / opt-out — auto callback not queued",
+                completed_at: new Date().toISOString(),
+              });
+            }
           }
         } catch (_) { /* non-fatal */ }
       }
@@ -701,6 +712,18 @@ Deno.serve(async (req) => {
             eventType: "missed_callback_skipped",
             payload: { reason: "dnd_or_opt_out", phone: customerPhone },
           });
+          const leadId = (call.lead_id as string) || null;
+          if (leadId) {
+            await db.from("bos_activities").insert({
+              id: crypto.randomUUID(),
+              tenant_id: tenantId,
+              lead_id: leadId,
+              activity_type: "voice_callback_skipped",
+              subject: "Missed-call callback skipped",
+              body: "Do not call / opt-out — auto callback not queued",
+              completed_at: new Date().toISOString(),
+            });
+          }
         }
       } catch (_) { /* non-fatal */ }
     }

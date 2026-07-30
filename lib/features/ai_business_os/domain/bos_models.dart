@@ -225,6 +225,7 @@ class BosLead {
       (fullName != null && fullName!.trim().isNotEmpty) ? fullName!.trim() : (email ?? phone ?? 'Lead');
 
   bool get handoverReady => meta?['handover_ready'] == true;
+  bool get doNotCall => meta?['do_not_call'] == true || meta?['dnd'] == true;
   String? get aiRecommendation => meta?['ai_recommendation']?.toString();
   String? get intent => meta?['intent']?.toString();
 

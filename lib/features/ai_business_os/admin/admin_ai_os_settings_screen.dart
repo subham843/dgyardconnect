@@ -58,6 +58,8 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
   bool _autoCallbackMissed = true;
   Map<String, dynamic>? _voiceReady;
   bool _loadingReady = false;
+  List<Map<String, dynamic>> _voiceEventDogfood = [];
+  bool _pingingWebhook = false;
 
   final _nameCtrl = TextEditingController();
   final _primaryCtrl = TextEditingController();
@@ -257,6 +259,7 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
         _webhookExotel = await _repo.voiceWebhookUrl(provider: 'exotel');
         _webhookTelnyx = await _repo.voiceWebhookUrl(provider: 'telnyx');
         _voiceReady = await _repo.voiceReadinessChecklist();
+        _voiceEventDogfood = await _repo.listVoiceEvents(limit: 5);
       } catch (_) {}
       setState(() => _loading = false);
     }
@@ -266,9 +269,35 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
     setState(() => _loadingReady = true);
     try {
       final r = await _repo.voiceReadinessChecklist();
-      if (mounted) setState(() => _voiceReady = r);
+      final ev = await _repo.listVoiceEvents(limit: 5);
+      if (mounted) {
+        setState(() {
+          _voiceReady = r;
+          _voiceEventDogfood = ev;
+        });
+      }
     } catch (_) {}
     if (mounted) setState(() => _loadingReady = false);
+  }
+
+  Future<void> _sendWebhookTestPing() async {
+    setState(() => _pingingWebhook = true);
+    try {
+      await _repo.insertVoiceEventTestPing();
+      _voiceEventDogfood = await _repo.listVoiceEvents(limit: 5);
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Test ping written to bos_voice_events')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _pingingWebhook = false);
+    }
   }
 
   Future<void> _copyWebhook(String? url, String label) async {
@@ -1373,6 +1402,38 @@ class _AdminAiOsSettingsScreenState extends State<AdminAiOsSettingsScreen> {
                       onPressed: () => _copyWebhook(_webhookTelnyx, 'Telnyx'),
                     ),
                   ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Recent webhook events',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _pingingWebhook ? null : _sendWebhookTestPing,
+                      child: Text(_pingingWebhook ? '…' : 'Send test ping'),
+                    ),
+                  ],
+                ),
+                if (_voiceEventDogfood.isEmpty)
+                  Text(
+                    'No voice events yet — paste webhook URLs above then dial / receive a call.',
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                  )
+                else
+                  ..._voiceEventDogfood.map((e) {
+                    final at = e['created_at']?.toString() ?? '';
+                    final short = at.length >= 19 ? at.substring(0, 19).replaceFirst('T', ' ') : at;
+                    return ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.webhook, size: 18),
+                      title: Text('${e['event_type'] ?? 'event'} · ${e['provider'] ?? '—'}'),
+                      subtitle: Text(short),
+                    );
+                  }),
                 const SizedBox(height: 24),
                 const Text('AI Sales Agent', style: TextStyle(fontWeight: FontWeight.bold)),
                 TextField(

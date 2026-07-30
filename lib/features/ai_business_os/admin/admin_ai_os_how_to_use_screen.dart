@@ -245,11 +245,15 @@ class _GuideList extends StatelessWidget {
         _GuideSection(
           icon: Icons.phone_rounded,
           color: const Color(0xFF8B5CF6),
-          title: 'Voice & Marketing',
-          subtitle: 'कॉल और विज्ञापन कॉपी',
+          title: 'AI Voice (Telnyx / Twilio / …)',
+          subtitle: 'Dial, webhook, Run due, greeting',
           body:
-              'Voice: कॉल कतार में डालें, लीड लिंक करें, “Simulate complete” से ट्रांसक्रिप्ट/CRM अपडेट।\n'
-              'Marketing: ब्रीफ लिखें → Generate → हेडलाइन/CTA देखें।',
+              'Voice: कॉल कतार में डालें, लीड लिंक करें, Complete से STT/CRM अपडेट।\n'
+              'Settings: Active provider + secrets, Inbound greeting, webhook URL copy।\n'
+              'Telnyx: Connection ID + From number; webhook Call Control app में paste।\n'
+              'Hub/Voice “Run due”: scheduled callbacks / campaign voice dial।\n'
+              'Lead “Do not call”: missed auto-callback skip। Inbox से Queue AI call।\n'
+              'Marketing: ब्रीफ → Generate; campaign voice भी Due में दिखेगा।',
           route: RouteNames.adminAiOsVoice,
         ),
         _GuideSection(
@@ -312,6 +316,7 @@ class _GuideList extends StatelessWidget {
         body:
             '• Create a conversation or Simulate inbound for testing.\n'
             '• Select a thread, type replies, or tap AI reply (uses Knowledge Base).\n'
+            '• Queue AI call creates/links a lead and enqueues Voice (respects Do not call).\n'
             '• For live Meta WhatsApp, configure tokens and the webhook URL later.',
         route: RouteNames.adminAiOsWhatsapp,
       ),
@@ -380,11 +385,15 @@ class _GuideList extends StatelessWidget {
       _GuideSection(
         icon: Icons.phone_rounded,
         color: const Color(0xFF8B5CF6),
-        title: 'Voice & Marketing',
-        subtitle: 'Calls and ad copy',
+        title: 'AI Voice (Telnyx / Twilio / …)',
+        subtitle: 'Dial, webhooks, Run due, greeting',
         body:
-            'Voice: queue a call with script + lead; Simulate complete updates CRM.\n'
-            'Marketing: enter a brief → Generate headline/CTA copy.',
+            '• Settings: pick provider, paste secrets, set From number + inbound greeting.\n'
+            '• Copy webhook URL into Telnyx Call Control (or Twilio/Exotel) status callbacks.\n'
+            '• Queue calls from Voice, Leads, or Inbox “Queue AI call”.\n'
+            '• Hub/Voice “Run due” dials scheduled callbacks and campaign voice queues.\n'
+            '• Lead “Do not call” / opt-outs skip missed-call auto-callbacks.\n'
+            '• Complete/recording → Sarvam STT when key is set. Marketing Generate for ad copy.',
         route: RouteNames.adminAiOsVoice,
       ),
       _GuideSection(

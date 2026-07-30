@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../features/admin/widgets/admin_embedded_scaffold.dart';
 import '../data/bos_repository.dart';
 import '../domain/bos_models.dart';
+import '../domain/bos_permissions.dart';
 
 class AdminAiOsWhatsappScreen extends StatefulWidget {
   const AdminAiOsWhatsappScreen({super.key, this.embedded = false});
@@ -214,6 +215,83 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
     }
   }
 
+  Future<void> _queueVoiceCall() async {
+    final conv = _selected;
+    if (conv == null) return;
+    if (!BosPermissions.canCreate) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Permission denied')),
+      );
+      return;
+    }
+    var phone = (conv.phone ?? '').trim();
+    var leadId = conv.leadId;
+    if (leadId != null) {
+      try {
+        final leads = await _repo.listLeads();
+        BosLead? lead;
+        for (final l in leads) {
+          if (l.id == leadId) {
+            lead = l;
+            break;
+          }
+        }
+        if (lead != null) {
+          if (lead.doNotCall) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Lead is Do not call — clear it on the lead first'),
+                ),
+              );
+            }
+            return;
+          }
+          if (phone.isEmpty && (lead.phone ?? '').isNotEmpty) {
+            phone = lead.phone!.trim();
+          }
+        }
+      } catch (_) {}
+    }
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No phone on conversation — set phone or link a lead')),
+      );
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      if (leadId == null) {
+        leadId = await _repo.createLead({
+          'full_name': _titleFor(conv),
+          'phone': phone,
+          'source': 'inbox_${conv.channel ?? 'chat'}',
+          'stage': 'new',
+          'score': 'warm',
+        });
+        await _repo.linkConversationLead(conv.id, leadId);
+      }
+      await _repo.queueFollowUpCall(
+        leadId: leadId,
+        phone: phone,
+        generateScript: true,
+        scheduledAt: DateTime.now(),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('AI call queued — open Voice or tap Run due')),
+        );
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   String _titleFor(BosConversation c) {
     if (c.phone != null && c.phone!.isNotEmpty) return c.phone!;
     return c.channel ?? 'Chat';
@@ -318,10 +396,20 @@ class _AdminAiOsWhatsappScreenState extends State<AdminAiOsWhatsappScreen> {
                                     subtitle: Text(
                                       '${_selected!.channel ?? 'whatsapp'} · AI ${_selected!.aiEnabled ? 'on' : 'off'}',
                                     ),
-                                    trailing: FilledButton.tonalIcon(
-                                      onPressed: _busy ? null : _aiReply,
-                                      icon: const Icon(Icons.psychology),
-                                      label: const Text('AI reply'),
+                                    trailing: Wrap(
+                                      spacing: 8,
+                                      children: [
+                                        OutlinedButton.icon(
+                                          onPressed: _busy ? null : _queueVoiceCall,
+                                          icon: const Icon(Icons.phone_forwarded, size: 18),
+                                          label: const Text('Queue AI call'),
+                                        ),
+                                        FilledButton.tonalIcon(
+                                          onPressed: _busy ? null : _aiReply,
+                                          icon: const Icon(Icons.psychology),
+                                          label: const Text('AI reply'),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                   const Divider(height: 1),

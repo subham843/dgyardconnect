@@ -291,6 +291,8 @@ Deno.serve(async (req) => {
 
         if (campaign.trigger_voice && phone) {
           const callId = crypto.randomUUID();
+          const when = new Date().toISOString();
+          const script = (messageBody || "Hello from DG.YARD — following up on our message.").slice(0, 500);
           await db.from("bos_voice_calls").insert({
             id: callId,
             tenant_id: tenantId,
@@ -298,9 +300,16 @@ Deno.serve(async (req) => {
             direction: "outbound",
             status: "queued",
             provider: comm.voiceProvider === "stub" ? "stub" : comm.voiceProvider,
-            meta: { campaign_id: campaignId },
+            script,
+            scheduled_at: when,
+            meta: {
+              campaign_id: campaignId,
+              from_campaign: true,
+              voice_provider: comm.voiceProvider,
+              scheduled_at: when,
+            },
           });
-          // Best-effort live dial when voice secrets set
+          // Leave queued for Hub/Voice “Run due” (or dial immediately if already due)
           try {
             const dialUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/bos-voice-dial`;
             const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -312,7 +321,7 @@ Deno.serve(async (req) => {
               },
               body: JSON.stringify({ call_id: callId, tenant_id: tenantId }),
             });
-          } catch (_) { /* non-fatal */ }
+          } catch (_) { /* non-fatal — remains queued for Run due */ }
         }
 
         const recipStatus =

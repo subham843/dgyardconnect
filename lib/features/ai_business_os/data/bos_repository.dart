@@ -922,6 +922,44 @@ class BosRepository extends SupabaseRepositoryBase {
     );
   }
 
+  Future<void> setLeadDoNotCall(String leadId, bool value) async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) return;
+    final row = await client.from('bos_leads').select('meta').eq('id', leadId).maybeSingle();
+    final meta = row?['meta'] is Map
+        ? Map<String, dynamic>.from(row!['meta'] as Map)
+        : <String, dynamic>{};
+    meta['do_not_call'] = value;
+    await updateLead(leadId, {
+      'meta': meta,
+      'updated_at': DateTime.now().toIso8601String(),
+    });
+    await addLeadActivity(
+      leadId: leadId,
+      activityType: value ? 'dnd_on' : 'dnd_off',
+      subject: value ? 'Do not call enabled' : 'Do not call cleared',
+      body: value
+          ? 'Missed-call auto-callbacks will be skipped for this lead'
+          : 'Auto-callbacks allowed again',
+    );
+  }
+
+  Future<void> insertVoiceEventTestPing() async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) throw Exception('Not authenticated');
+    final tid = await activeTenantId;
+    await client.from('bos_voice_events').insert({
+      'id': _uuid.v4(),
+      'tenant_id': tid,
+      'provider': 'test',
+      'event_type': 'test_ping',
+      'payload': {
+        'note': 'Manual dogfood ping from Settings',
+        'at': DateTime.now().toIso8601String(),
+      },
+    });
+  }
+
   Future<void> assignLead({
     required String leadId,
     required String assigneeFirebaseUid,
@@ -1668,6 +1706,15 @@ class BosRepository extends SupabaseRepositoryBase {
       'last_message_at': DateTime.now().toIso8601String(),
     }).eq('id', conversationId);
     return id;
+  }
+
+  Future<void> linkConversationLead(String conversationId, String leadId) async {
+    final client = await SupabaseRepositoryBase.clientWithAuth();
+    if (client == null) return;
+    await client.from('bos_conversations').update({
+      'lead_id': leadId,
+      'updated_at': DateTime.now().toIso8601String(),
+    }).eq('id', conversationId);
   }
 
   Future<List<BosCampaign>> listCampaigns() async {
